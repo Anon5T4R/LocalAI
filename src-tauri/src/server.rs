@@ -104,6 +104,13 @@ fn build_args(cfg: &LlamaConfig) -> Vec<String> {
     if let Some(mm) = &cfg.mmproj {
         push(&mut a, "--mmproj", mm.clone());
     }
+    // Speculative decoding: modelo-rascunho + offload + janela de rascunho
+    if let Some(draft) = &cfg.draft_model {
+        push(&mut a, "-md", draft.clone());
+        push(&mut a, "-ngld", cfg.draft_n_gpu_layers.to_string());
+        // b9723 renomeou --draft-max -> --spec-draft-n-max
+        push(&mut a, "--spec-draft-n-max", cfg.draft_max.to_string());
+    }
 
     push(&mut a, "--host", cfg.host.clone());
     push(&mut a, "--port", cfg.port.to_string());

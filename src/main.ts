@@ -61,6 +61,9 @@ interface LlamaConfig {
   mmproj: string | null;
   host: string;
   port: number;
+  draft_model: string | null;
+  draft_n_gpu_layers: number;
+  draft_max: number;
 }
 interface Recommendation {
   config: LlamaConfig;
@@ -92,7 +95,11 @@ const state = {
     kv_quant: false,
     port: 8080,
     use_mmproj: false, // visao desligada por padrao
+    use_speculative: null as boolean | null, // auto
+    draft_path: null as string | null,
+    draft_size_gb: null as number | null,
   },
+  draftCandidate: null as ModelInfo | null,
   ready: false,
   busy: false,
   messages: [] as ChatMessage[],
@@ -364,8 +371,26 @@ async function selectModel(m: ModelInfo) {
   state.overrides.gpu_offload = null;
   state.overrides.n_gpu_layers = null;
   state.overrides.use_mmproj = false; // visao sempre comeca desligada
+  // detecta um modelo-rascunho (mesma familia, bem menor) p/ speculative
+  state.draftCandidate = findDraft(m);
+  state.overrides.use_speculative = null; // auto
+  state.overrides.draft_path = state.draftCandidate?.path ?? null;
+  state.overrides.draft_size_gb = state.draftCandidate?.size_gb ?? null;
   await refreshRecommendation();
   switchView("tuner");
+}
+
+// Acha um modelo-rascunho p/ speculative: mesma arquitetura, bem menor que o alvo.
+function findDraft(target: ModelInfo): ModelInfo | null {
+  const candidates = state.models.filter(
+    (m) =>
+      m.path !== target.path &&
+      m.arch === target.arch &&
+      m.size_gb < target.size_gb * 0.4 &&
+      m.size_gb < 2.0,
+  );
+  candidates.sort((a, b) => a.size_gb - b.size_gb);
+  return candidates[0] ?? null;
 }
 
 async function refreshRecommendation() {
@@ -454,6 +479,18 @@ function renderTuner() {
               ),
             ]
           : []),
+        ...(state.draftCandidate
+          ? [
+              ctrlToggle(
+                `Decodificação especulativa (rascunho: ${state.draftCandidate.name})`,
+                c.draft_model != null,
+                (on) => {
+                  state.overrides.use_speculative = on;
+                  refreshRecommendation();
+                },
+              ),
+            ]
+          : []),
         ctrlNumber("Porta", state.overrides.port, (val) => {
           state.overrides.port = val;
           refreshRecommendation();
@@ -478,6 +515,7 @@ function renderTuner() {
           fl("KV cache", `${c.cache_type_k}`),
           fl("mlock", c.mlock ? "sim" : "nao"),
           fl("batch/ubatch", `${c.batch}/${c.ubatch}`),
+          fl("speculative", c.draft_model ? "ligado" : "off"),
         ]),
         h("div", { class: "cmd-label" }, ["Linha de comando:"]),
         h("pre", { class: "cmd" }, [argsPreview(c)]),
@@ -517,6 +555,15 @@ function argsPreview(c: LlamaConfig): string {
     a.push("--cache-type-k", c.cache_type_k, "--cache-type-v", c.cache_type_v);
   if (c.mlock) a.push("--mlock");
   if (c.mmproj) a.push("--mmproj", `"${c.mmproj}"`);
+  if (c.draft_model)
+    a.push(
+      "-md",
+      `"${c.draft_model}"`,
+      "-ngld",
+      String(c.draft_n_gpu_layers),
+      "--draft-max",
+      String(c.draft_max),
+    );
   a.push("--host", c.host, "--port", String(c.port));
   return a.join(" ");
 }

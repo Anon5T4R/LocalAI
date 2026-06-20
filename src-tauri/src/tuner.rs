@@ -26,6 +26,10 @@ pub struct LlamaConfig {
     pub mmproj: Option<String>,
     pub host: String,
     pub port: u16,
+    /// Speculative decoding: modelo-rascunho (mesma familia/tokenizer).
+    pub draft_model: Option<String>,
+    pub draft_n_gpu_layers: u32,
+    pub draft_max: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -37,6 +41,10 @@ pub struct TuneOverrides {
     pub port: Option<u16>,
     /// Carregar o encoder de visao (mmproj). Desligado por padrao.
     pub use_mmproj: Option<bool>,
+    /// Speculative decoding: caminho e tamanho do modelo-rascunho.
+    pub use_speculative: Option<bool>,
+    pub draft_path: Option<String>,
+    pub draft_size_gb: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -132,6 +140,18 @@ pub fn recommend(
     // --- KV cache (RAM) ---
     let kv_gb = estimate_kv_gb(ctx, model.block_count, kv_embd_of(model), bpe);
 
+    // --- Speculative decoding (modelo-rascunho) ---
+    // Opt-in: no benchmark deste hardware (rascunho na CPU, prompt aberto) o
+    // speculative ficou neutro/levemente pior. Fica como toggle para testar em
+    // workloads previsiveis (codigo) ou com rascunho na GPU + RAM livre.
+    let draft_path = ov.draft_path.clone();
+    let use_speculative = draft_path.is_some() && ov.use_speculative.unwrap_or(false);
+    let draft_size = if use_speculative {
+        ov.draft_size_gb.unwrap_or(1.0)
+    } else {
+        0.0
+    };
+
     // --- GPU offload (Vulkan / Vega) ---
     // Medido neste hardware (Qwen 9B Q6): offload TOTAL deu ~+40% de geracao e
     // ~+23% de prompt vs CPU puro; offload PARCIAL ficou ABAIXO do CPU.
@@ -139,6 +159,7 @@ pub fn recommend(
     let max_gpu_layers = model.block_count.map(|b| b + 1).unwrap_or(0);
     // Orcamento real da iGPU (detectado via Vulkan), com fallback ~metade da RAM.
     let gpu_budget_gb = hw.gpu_budget_gb;
+    // o rascunho fica na CPU (RAM normal), entao nao pesa no orcamento da iGPU
     let fits_gpu = max_gpu_layers > 0 && (model.size_gb + kv_gb) < gpu_budget_gb * 0.92;
     let gpu_recommended = fits_gpu;
     let gpu_on = ov.gpu_offload.unwrap_or(fits_gpu);
@@ -174,8 +195,9 @@ pub fn recommend(
     };
 
     // --- Estimativa de RAM ---
+    // draft_size entra aqui porque o rascunho fica na RAM da CPU.
     let overhead_gb = 0.8;
-    let est_ram_gb = model.size_gb + kv_gb + overhead_gb;
+    let est_ram_gb = model.size_gb + kv_gb + draft_size + overhead_gb;
     let fits_in_ram = est_ram_gb < hw.total_ram_gb * 0.92;
 
     rationale.push(format!(
@@ -250,6 +272,18 @@ pub fn recommend(
         }
     }
 
+    // O rascunho (pequeno) fica SEMPRE na CPU: preserva o GTT da iGPU para o
+    // modelo grande e evita dobrar o uso de memoria (que travava o load).
+    let draft_n_gpu_layers = 0u32;
+    if use_speculative {
+        rationale.push(
+            "Speculative decoding LIGADO: o rascunho (na CPU) propoe ate 16 tokens por passo e o modelo grande (na iGPU) verifica todos numa unica leitura de memoria. Como o gargalo aqui e banda de memoria, isso tende a acelerar a geracao sem perder qualidade.".to_string(),
+        );
+        warnings.push(
+            "Ganho do speculative depende da taxa de aceitacao do rascunho (alto em texto previsivel/codigo, menor em conteudo muito aberto).".to_string(),
+        );
+    }
+
     let port = ov.port.unwrap_or(8080);
 
     let config = LlamaConfig {
@@ -269,6 +303,9 @@ pub fn recommend(
         mmproj,
         host: "127.0.0.1".to_string(),
         port,
+        draft_model: if use_speculative { draft_path } else { None },
+        draft_n_gpu_layers,
+        draft_max: 16,
     };
 
     Recommendation {
