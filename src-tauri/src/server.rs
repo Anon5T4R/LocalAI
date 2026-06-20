@@ -116,6 +116,8 @@ fn build_args(cfg: &LlamaConfig) -> Vec<String> {
     push(&mut a, "--port", cfg.port.to_string());
     // metricas detalhadas no /props e nas respostas
     a.push("--metrics".to_string());
+    // reaproveita pedacos do KV cache entre turnos (chat multi-turno mais rapido)
+    push(&mut a, "--cache-reuse", "256".to_string());
     a
 }
 

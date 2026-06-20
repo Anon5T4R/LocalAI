@@ -113,7 +113,7 @@ const state = {
     // antes de responder; baixo demais corta a resposta antes de comecar.
     max_tokens: 2048,
   } as SamplingParams,
-  systemPrompt: "Voce e um assistente util e direto.",
+  systemPrompt: "", // vazio por padrao
   think: true, // modo raciocinio; desligado injeta /no_think (Qwen3)
   abort: null as AbortController | null,
 };
@@ -733,6 +733,7 @@ function buildChatView() {
           id: "sysprompt",
           class: "sysprompt",
           rows: "2",
+          placeholder: "System prompt (opcional) — vazio por padrão",
           onChange: (e: Event) => {
             state.systemPrompt = (e.target as HTMLTextAreaElement).value;
           },
@@ -830,11 +831,14 @@ async function send() {
   const a = addAssistantMessage();
   a.answer.classList.add("streaming");
 
-  const sysContent = state.think
-    ? state.systemPrompt
-    : `${state.systemPrompt} /no_think`;
+  const sysContent = (
+    state.think ? state.systemPrompt : `${state.systemPrompt} /no_think`
+  ).trim();
   const msgs: ChatMessage[] = [
-    { role: "system", content: sysContent },
+    // so envia system message se houver conteudo
+    ...(sysContent
+      ? [{ role: "system" as const, content: sysContent }]
+      : []),
     ...state.messages,
   ];
 
