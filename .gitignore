@@ -8,3 +8,6 @@ icon-src.png
 # Ignora tudo na pasta menos o .gitkeep.
 src-tauri/binaries/*
 !src-tauri/binaries/.gitkeep
+
+# Workaround LOCAL p/ tirar o target/ do OneDrive (path Windows quebra o CI Linux/macOS)
+src-tauri/.cargo/config.toml
