@@ -954,9 +954,7 @@ async function send() {
   const a = addAssistantMessage();
   a.answer.classList.add("streaming");
 
-  const sysContent = (
-    state.think ? state.systemPrompt : `${state.systemPrompt} /no_think`
-  ).trim();
+  const sysContent = state.systemPrompt.trim();
   const msgs: ChatMessage[] = [
     // so envia system message se houver conteudo
     ...(sysContent
@@ -964,6 +962,16 @@ async function send() {
       : []),
     ...conv.messages,
   ];
+  // injeta </think> /no_think como prefixo da ultima mensagem do usuario
+  if (!state.think) {
+    const last = msgs[msgs.length - 1];
+    if (last?.role === "user") {
+      msgs[msgs.length - 1] = {
+        ...last,
+        content: `</think> /no_think\n\n${last.content}`,
+      };
+    }
+  }
 
   const port = state.rec!.config.port;
   state.abort = new AbortController();
