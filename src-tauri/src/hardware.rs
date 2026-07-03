@@ -25,8 +25,22 @@ pub struct HardwareInfo {
     pub features: Features,
     pub recommended_gen_threads: usize,
     pub recommended_batch_threads: usize,
-    /// Memoria enderecavel pela iGPU via Vulkan (GTT/UMA), em GB.
+    /// Memoria enderecavel pela GPU via Vulkan (VRAM ou GTT/UMA), em GB.
     pub gpu_budget_gb: f64,
+    /// Nome do device Vulkan detectado (ex.: "AMD Radeon(TM) Graphics").
+    pub gpu_name: Option<String>,
+    /// true = GPU integrada (memoria compartilhada/UMA); false = dedicada.
+    pub gpu_is_igpu: bool,
+}
+
+/// Heuristica por nome: dedicadas conhecidas -> false; resto (APUs/iGPUs e
+/// desconhecidas) -> true, que e o caso conservador para as recomendacoes.
+fn guess_igpu(name: &str) -> bool {
+    let n = name.to_lowercase();
+    const DISCRETE: [&str; 8] = [
+        "geforce", "rtx", "gtx", "quadro", "radeon rx", "radeon pro", "arc a", "arc b",
+    ];
+    !DISCRETE.iter().any(|d| n.contains(d))
 }
 
 // Em ARM (Apple Silicon / ARM Linux) nao ha SIMD x86 nem CPUID; usa NEON.
@@ -78,7 +92,7 @@ fn detect_features() -> Features {
     }
 }
 
-pub fn get_hardware(gpu_budget_gb: Option<f64>) -> HardwareInfo {
+pub fn get_hardware(gpu: Option<(f64, String)>) -> HardwareInfo {
     let mut sys = System::new();
     sys.refresh_memory();
     sys.refresh_cpu_all();
@@ -103,8 +117,12 @@ pub fn get_hardware(gpu_budget_gb: Option<f64>) -> HardwareInfo {
     // O processamento de prompt e compute-bound: aproveita os threads logicos.
     let recommended_batch_threads = logical_cores;
 
-    // Sem deteccao real, estima ~metade da RAM (comportamento tipico de UMA/GTT no AMD APU).
-    let gpu_budget_gb = gpu_budget_gb.unwrap_or(total_ram_gb * 0.5);
+    // Sem deteccao real, estima ~metade da RAM (comportamento tipico de UMA/GTT em APUs).
+    let (gpu_budget_gb, gpu_name) = match gpu {
+        Some((b, n)) => (b, Some(n)),
+        None => (total_ram_gb * 0.5, None),
+    };
+    let gpu_is_igpu = gpu_name.as_deref().map(guess_igpu).unwrap_or(true);
 
     HardwareInfo {
         cpu_brand,
@@ -116,5 +134,7 @@ pub fn get_hardware(gpu_budget_gb: Option<f64>) -> HardwareInfo {
         recommended_gen_threads,
         recommended_batch_threads,
         gpu_budget_gb,
+        gpu_name,
+        gpu_is_igpu,
     }
 }

@@ -621,6 +621,227 @@ button {
   border-color: var(--accent);
 }
 
+/* ---------- Markdown nas respostas ---------- */
+.bubble.md {
+  white-space: normal; /* markdown controla o fluxo; pre-wrap so no texto cru */
+}
+.bubble.md p {
+  margin: 0 0 8px;
+}
+.bubble.md p:last-child {
+  margin-bottom: 0;
+}
+.bubble.md pre {
+  background: #0b0e13;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+.bubble.md code {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 12.5px;
+  background: #0b0e13;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.bubble.md pre code {
+  background: none;
+  padding: 0;
+}
+.bubble.md ul,
+.bubble.md ol {
+  margin: 4px 0 8px;
+  padding-left: 22px;
+}
+.bubble.md table {
+  border-collapse: collapse;
+  margin: 6px 0;
+}
+.bubble.md th,
+.bubble.md td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  font-size: 12.5px;
+}
+.bubble.md blockquote {
+  margin: 6px 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+.bubble.md a {
+  color: var(--accent);
+}
+.bubble.md img {
+  max-width: 100%;
+}
+
+.copy {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.copy:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* ---------- Contador de contexto ---------- */
+.ctx {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 12px;
+}
+.ctx.warn {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* ---------- Anexo de imagem (visao) ---------- */
+.attach {
+  font-size: 16px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+.img-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+}
+.img-preview img {
+  max-height: 64px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.warn-txt {
+  color: var(--warn);
+  font-size: 12px;
+}
+.chat-img {
+  display: block;
+  max-width: 260px;
+  max-height: 200px;
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+
+/* ---------- Baixar modelos (Hub) ---------- */
+.hub {
+  padding: 16px;
+  max-width: 860px;
+}
+.hub-search {
+  display: flex;
+  gap: 8px;
+}
+.hub-search input {
+  flex: 1;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-family: inherit;
+  font-size: 13px;
+}
+.hub-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.hub-status {
+  margin-top: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.hub-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.hub-status-row .hub-fname {
+  flex: 1;
+}
+.bar {
+  height: 6px;
+  background: #0b0e13;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+.hub-results {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hub-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.hub-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.hub-head:hover .hub-id {
+  color: var(--accent);
+}
+.hub-id {
+  font-weight: 600;
+  font-size: 13px;
+}
+.hub-meta {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.hub-files {
+  border-top: 1px solid var(--border);
+  padding: 6px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.hub-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+}
+.hub-fname {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hub-fsize {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 /* ---------- Logs ---------- */
 .logs {
   margin: 0;

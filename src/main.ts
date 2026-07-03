@@ -1,11 +1,19 @@
 import "./styles.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import {
   streamChat,
+  contentText,
   type ChatMessage,
+  type ContentPart,
   type SamplingParams,
+  type Usage,
 } from "./llama";
+
+// markdown do chat: quebra de linha simples vira <br> (estilo chat)
+marked.setOptions({ breaks: true, gfm: true });
 
 // ---------- Tipos espelhando o backend Rust ----------
 interface Features {
@@ -26,6 +34,8 @@ interface HardwareInfo {
   recommended_gen_threads: number;
   recommended_batch_threads: number;
   gpu_budget_gb: number;
+  gpu_name: string | null;
+  gpu_is_igpu: boolean;
 }
 interface ModelInfo {
   path: string;
@@ -80,6 +90,22 @@ interface StatusReport {
   port: number | null;
   model_name: string | null;
 }
+interface RunningInfo {
+  port: number;
+  model_name: string;
+  args: string[];
+}
+interface HubModel {
+  id: string;
+  downloads: number;
+  likes: number;
+  updated: string | null;
+}
+interface HubFile {
+  path: string;
+  size_bytes: number;
+  size_gb: number;
+}
 
 // ---------- Estado ----------
 const state = {
@@ -112,11 +138,15 @@ const state = {
     repeat_penalty: 1.1,
     // alto por padrao: modelos de reasoning gastam muitos tokens "pensando"
     // antes de responder; baixo demais corta a resposta antes de comecar.
-    max_tokens: 2048,
+    max_tokens: 4096,
   } as SamplingParams,
-  systemPrompt: "", // vazio por padrao
+  systemPrompt: "", // carregado do localStorage no init
   think: false, // opt-in: reasoning desligado por padrao (reasoning_budget=0)
   abort: null as AbortController | null,
+  /** imagem pendente do composer (data-URL) para modelos com visao */
+  pendingImage: null as string | null,
+  /** download do Hub em andamento (chave repo::file) */
+  hubActive: null as string | null,
 };
 
 // ---------- Helpers de DOM ----------
@@ -146,6 +176,19 @@ const $ = <T extends HTMLElement>(sel: string) =>
 const DIRS_KEY = "taylorai.dirs";
 const SAMPLING_KEY = "taylorai.sampling";
 const CONVS_KEY = "taylorai.conversations";
+const SYS_KEY = "taylorai.sysprompt";
+const THINK_KEY = "taylorai.think";
+
+// preferencias persistidas (o system prompt sumia a cada restart)
+state.systemPrompt = localStorage.getItem(SYS_KEY) ?? "";
+state.think = localStorage.getItem(THINK_KEY) === "1";
+
+// ---------- Markdown ----------
+function renderMarkdown(el: HTMLElement, text: string) {
+  el.classList.add("md");
+  el.dataset.src = text; // fonte crua para o botao copiar
+  el.innerHTML = DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
+}
 
 // ---------- Conversas (multi-chat) ----------
 interface Conversation {
@@ -172,7 +215,11 @@ function newConversation(): Conversation {
   return c;
 }
 function saveConvs() {
-  localStorage.setItem(CONVS_KEY, JSON.stringify(state.conversations));
+  const json = JSON.stringify(state.conversations);
+  // localStorage como cache rapido + arquivo em disco como fonte duravel
+  // (o WebView pode limpar o localStorage; o arquivo sobrevive)
+  localStorage.setItem(CONVS_KEY, json);
+  invoke("save_conversations", { json }).catch(() => {});
 }
 function switchConv(id: string) {
   if (state.busy) return; // nao troca no meio de uma geracao
@@ -236,9 +283,23 @@ function renderMessages() {
   }
   for (const m of conv.messages) {
     if (m.role === "user") {
-      addMessage("user", m.content);
+      const imgs =
+        typeof m.content === "string"
+          ? []
+          : m.content
+              .filter(
+                (p): p is Extract<ContentPart, { type: "image_url" }> =>
+                  p.type === "image_url",
+              )
+              .map((p) => p.image_url.url);
+      addMessage("user", contentText(m.content), imgs);
     } else if (m.role === "assistant") {
-      addAssistantMessage().answer.textContent = m.content;
+      const a = addAssistantMessage();
+      renderMarkdown(a.answer, contentText(m.content));
+      if (m.reasoning) {
+        a.thinkingWrap.style.display = "";
+        a.thinking.textContent = m.reasoning;
+      }
     }
   }
 }
@@ -275,6 +336,7 @@ function buildShell() {
             "Nenhum modelo selecionado",
           ]),
           h("div", { class: "topbar-right" }, [
+            h("div", { id: "ctx", class: "ctx", title: "Tokens de contexto usados" }, []),
             h("div", { id: "hud", class: "hud" }, []),
             h("div", { id: "status-pill", class: "pill off" }, ["parado"]),
             h("button", { id: "load-btn", class: "primary", disabled: true }, [
@@ -287,10 +349,12 @@ function buildShell() {
           h("button", { class: "tab", "data-view": "tuner" }, [
             "Ajustes & Auto-tuner",
           ]),
+          h("button", { class: "tab", "data-view": "hub" }, ["Baixar modelos"]),
           h("button", { class: "tab", "data-view": "logs" }, ["Logs"]),
         ]),
         h("section", { id: "view-chat", class: "view" }, []),
         h("section", { id: "view-tuner", class: "view hidden" }, []),
+        h("section", { id: "view-hub", class: "view hidden" }, []),
         h("section", { id: "view-logs", class: "view hidden" }, [
           h("pre", { id: "logs", class: "logs" }, []),
         ]),
@@ -308,6 +372,7 @@ function buildShell() {
   );
 
   buildChatView();
+  buildHubView();
 }
 
 function switchView(view: string) {
@@ -319,7 +384,7 @@ function switchView(view: string) {
         (t as HTMLElement).dataset.view === view,
       ),
     );
-  for (const v of ["chat", "tuner", "logs"]) {
+  for (const v of ["chat", "tuner", "hub", "logs"]) {
     $(`#view-${v}`).classList.toggle("hidden", v !== view);
   }
 }
@@ -351,7 +416,9 @@ async function loadHardware() {
       `Tuner: ${hw.recommended_gen_threads} threads p/ geracao, ${hw.recommended_batch_threads} p/ prompt`,
     ]),
     h("div", { class: "hw-threads" }, [
-      `iGPU Vulkan: ~${hw.gpu_budget_gb.toFixed(1)} GB endereçáveis p/ offload`,
+      hw.gpu_name
+        ? `GPU (Vulkan): ${hw.gpu_name} — ~${hw.gpu_budget_gb.toFixed(1)} GB p/ offload`
+        : `GPU Vulkan não detectada — estimando ~${hw.gpu_budget_gb.toFixed(1)} GB p/ offload`,
     ]),
   );
 }
@@ -534,7 +601,7 @@ function renderTuner() {
           },
         ),
         ctrlToggle(
-          `Offload Vulkan total (Vega)${rec.gpu_recommended ? " — recomendado" : ""}`,
+          `Offload total na GPU (${state.hw?.gpu_name ?? "Vulkan"})${rec.gpu_recommended ? " — recomendado" : ""}`,
           c.n_gpu_layers > 0,
           (on) => {
             state.overrides.gpu_offload = on;
@@ -750,7 +817,14 @@ async function loadServer() {
   $("#load-btn").setAttribute("disabled", "true");
   addLog(`\n=== Carregando ${state.rec.config.model_name} ===`);
   try {
-    await invoke("start_server", { config: state.rec.config });
+    const info = await invoke<RunningInfo>("start_server", {
+      config: state.rec.config,
+    });
+    // o backend pode ter trocado a porta se a preferida estava ocupada
+    if (info.port !== state.rec.config.port) {
+      addLog(`[taylorai] porta ajustada para ${info.port}`);
+      state.rec.config.port = info.port;
+    }
     switchView("logs");
     await waitForHealthy(state.rec.config.port);
     state.ready = true;
@@ -829,15 +903,16 @@ function buildChatView() {
           sampField("top_k", "top_k", 0, 200, 1),
           sampField("min_p", "min_p", 0, 1, 0.01),
           sampField("repeat_penalty", "repeat_penalty", 1, 2, 0.01),
-          sampField("max_tokens", "max_tokens", 16, 8192, 16),
+          sampField("max_tokens", "max_tokens", 16, 32768, 16),
         ]),
         h("textarea", {
           id: "sysprompt",
           class: "sysprompt",
           rows: "2",
           placeholder: "System prompt (opcional) — vazio por padrão",
-          onChange: (e: Event) => {
+          onInput: (e: Event) => {
             state.systemPrompt = (e.target as HTMLTextAreaElement).value;
+            localStorage.setItem(SYS_KEY, state.systemPrompt);
           },
         }, [state.systemPrompt]),
         h("label", { class: "ctrl toggle", style: "margin-top:8px" }, [
@@ -849,11 +924,23 @@ function buildChatView() {
             checked: state.think, // false por padrao (opt-in)
             onChange: (e: Event) => {
               state.think = (e.target as HTMLInputElement).checked;
+              localStorage.setItem(THINK_KEY, state.think ? "1" : "0");
             },
           }),
         ]),
       ]),
+      h("div", { id: "img-preview", class: "img-preview hidden" }, []),
       h("div", { class: "composer" }, [
+        h(
+          "button",
+          {
+            id: "attach",
+            class: "mini attach",
+            title:
+              "Anexar imagem (requer modelo com visão carregado com mmproj ligado no tuner)",
+          },
+          ["📎"],
+        ),
         h("textarea", {
           id: "input",
           placeholder: "Escreva sua mensagem…  (Enter envia, Shift+Enter quebra linha)",
@@ -863,6 +950,26 @@ function buildChatView() {
       ]),
     ]),
   );
+
+  // input de arquivo escondido para o anexo de imagem
+  const fileInput = h("input", {
+    type: "file",
+    accept: "image/*",
+    style: "display:none",
+  });
+  $("#view-chat").append(fileInput);
+  $("#attach").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    const f = fileInput.files?.[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      state.pendingImage = String(reader.result);
+      renderImgPreview();
+    };
+    reader.readAsDataURL(f);
+    fileInput.value = "";
+  });
 
   const input = $<HTMLTextAreaElement>("#input");
   input.addEventListener("keydown", (e) => {
@@ -883,6 +990,38 @@ function buildChatView() {
     renderMessages();
     $<HTMLTextAreaElement>("#input")?.focus();
   });
+}
+
+function renderImgPreview() {
+  const box = $("#img-preview");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!state.pendingImage) {
+    box.classList.add("hidden");
+    return;
+  }
+  box.classList.remove("hidden");
+  box.append(
+    h("img", { src: state.pendingImage }),
+    ...(!state.rec?.config.mmproj
+      ? [
+          h("span", { class: "warn-txt" }, [
+            "⚠ o modelo atual está sem visão — recarregue com “Visão / multimodal (mmproj)” ligado no tuner",
+          ]),
+        ]
+      : []),
+    h(
+      "button",
+      {
+        class: "x",
+        onClick: () => {
+          state.pendingImage = null;
+          renderImgPreview();
+        },
+      },
+      ["×"],
+    ),
+  );
 }
 
 // Durante o streaming o botao vira "Parar" e deve ABORTAR; caso contrario, envia.
@@ -919,12 +1058,20 @@ function sampField(
   ]);
 }
 
-function addMessage(role: "user" | "assistant", content: string): HTMLElement {
+function addMessage(
+  role: "user" | "assistant",
+  content: string,
+  images: string[] = [],
+): HTMLElement {
   const box = $("#messages");
   box.querySelector(".empty")?.remove();
+  const bubbleKids: (Node | string)[] = [
+    ...images.map((src) => h("img", { class: "chat-img", src })),
+    content,
+  ];
   const msg = h("div", { class: `msg ${role}` }, [
     h("div", { class: "role" }, [role === "user" ? "Voce" : "Assistente"]),
-    h("div", { class: "bubble" }, [content]),
+    h("div", { class: "bubble" }, bubbleKids),
   ]);
   box.append(msg);
   box.scrollTop = box.scrollHeight;
@@ -939,15 +1086,26 @@ async function send() {
   }
   const input = $<HTMLTextAreaElement>("#input");
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && !state.pendingImage) return;
   input.value = "";
   input.style.height = "auto";
 
   const conv = activeConv();
-  addMessage("user", text);
-  conv.messages.push({ role: "user", content: text });
+  const img = state.pendingImage;
+  state.pendingImage = null;
+  renderImgPreview();
+
+  // com imagem anexada, o content vira "parts" (formato OpenAI multimodal)
+  const content: string | ContentPart[] = img
+    ? [
+        { type: "image_url", image_url: { url: img } },
+        { type: "text", text: text || "Descreva a imagem." },
+      ]
+    : text;
+  addMessage("user", contentText(content), img ? [img] : []);
+  conv.messages.push({ role: "user", content });
   if (conv.messages.length === 1) {
-    conv.title = text.slice(0, 40); // titulo = inicio da 1a mensagem
+    conv.title = (text || "Imagem").slice(0, 40); // titulo = inicio da 1a msg
     renderConvBar();
   }
 
@@ -969,7 +1127,7 @@ async function send() {
   $("#send").textContent = "Parar";
   const t0 = performance.now();
   let acc = "";
-  let think = "";
+  let thinkText = "";
 
   try {
     for await (const chunk of streamChat(
@@ -979,16 +1137,18 @@ async function send() {
       state.abort.signal,
       state.think,
     )) {
+      if (chunk.note) addLog(chunk.note);
       if (chunk.reasoning) {
-        think += chunk.reasoning;
+        thinkText += chunk.reasoning;
         a.thinkingWrap.style.display = "";
-        a.thinking.textContent = think;
+        a.thinking.textContent = thinkText;
       }
       if (chunk.delta) {
         acc += chunk.delta;
-        a.answer.textContent = acc;
+        renderMarkdown(a.answer, acc);
         $("#messages").scrollTop = $("#messages").scrollHeight;
       }
+      if (chunk.usage) showCtx(chunk.usage);
       if (chunk.timings?.predicted_per_second) {
         showHud(chunk.timings);
       }
@@ -999,17 +1159,22 @@ async function send() {
     const aborted = (e as { name?: string })?.name === "AbortError";
     if (!aborted) {
       acc += `\n\n[erro: ${e}]`;
-      a.answer.textContent = acc;
+      renderMarkdown(a.answer, acc);
     }
   } finally {
     a.answer.classList.remove("streaming");
     // modelo de reasoning que so "pensou" e nao deu resposta limpa
-    if (!acc.trim() && think.trim()) {
+    if (!acc.trim() && thinkText.trim()) {
       a.answer.textContent =
         "(o modelo respondeu apenas no canal de pensamento — abra 'Pensando' acima)";
       a.answer.classList.add("muted");
     }
-    conv.messages.push({ role: "assistant", content: acc });
+    conv.messages.push({
+      role: "assistant",
+      content: acc,
+      // pensamento fica salvo para reabrir a conversa; nunca volta pra API
+      ...(thinkText.trim() ? { reasoning: thinkText } : {}),
+    });
     saveConvs();
     state.busy = false;
     state.abort = null;
@@ -1021,7 +1186,8 @@ async function send() {
   }
 }
 
-// Cria uma mensagem de assistente com secao recolhivel de "pensamento" + resposta.
+// Cria uma mensagem de assistente com secao recolhivel de "pensamento",
+// resposta em markdown e botao de copiar (copia a fonte crua).
 function addAssistantMessage() {
   const box = $("#messages");
   box.querySelector(".empty")?.remove();
@@ -1033,8 +1199,24 @@ function addAssistantMessage() {
   );
   (thinkingWrap as HTMLElement).style.display = "none";
   const answer = h("div", { class: "bubble" }, []);
+  const copyBtn = h(
+    "button",
+    {
+      class: "copy",
+      title: "Copiar resposta",
+      onClick: async () => {
+        const src = answer.dataset.src ?? answer.textContent ?? "";
+        try {
+          await navigator.clipboard.writeText(src);
+          copyBtn.textContent = "✓ copiado";
+          setTimeout(() => (copyBtn.textContent = "copiar"), 1200);
+        } catch {}
+      },
+    },
+    ["copiar"],
+  );
   const msg = h("div", { class: "msg assistant" }, [
-    h("div", { class: "role" }, ["Assistente"]),
+    h("div", { class: "role" }, ["Assistente ", copyBtn]),
     thinkingWrap,
     answer,
   ]);
@@ -1056,14 +1238,185 @@ function showHud(t: {
   $("#hud").innerHTML = `<b>${gen}</b>${pp ? " · " + pp : ""}`;
 }
 
+// Contador de contexto: quantos tokens da janela ja foram consumidos.
+// Evita o estouro silencioso (o servidor trunca/erra sem o usuario entender).
+function showCtx(u: Usage) {
+  const el = $("#ctx");
+  if (!el) return;
+  const used = (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0);
+  const max = state.rec?.config.ctx_size ?? 0;
+  if (!max || !used) return;
+  el.textContent = `ctx ${used}/${max}`;
+  const full = used > max * 0.8;
+  el.classList.toggle("warn", full);
+  el.title = full
+    ? "Contexto quase cheio: o servidor vai truncar as mensagens antigas. Aumente o contexto no tuner ou comece um chat novo."
+    : "Tokens de contexto usados (prompt + resposta)";
+}
+
+// ---------- Baixar modelos (Hugging Face Hub) ----------
+function buildHubView() {
+  const v = $("#view-hub");
+  v.innerHTML = "";
+  v.append(
+    h("div", { class: "hub" }, [
+      h("div", { class: "hub-search" }, [
+        h("input", {
+          id: "hub-q",
+          placeholder:
+            "Buscar modelos GGUF no Hugging Face…  (ex.: qwen3.5 4b, gemma 3n)",
+        }),
+        h("button", { id: "hub-go", class: "primary" }, ["Buscar"]),
+      ]),
+      h("div", { id: "hub-status", class: "hub-status hidden" }, []),
+      h("div", { id: "hub-results", class: "hub-results" }, [
+        h("div", { class: "muted pad" }, [
+          "Busque um modelo para começar. Dica: repositórios \"GGUF\" prontos costumam vir de bartowski, unsloth e lmstudio-community. Os downloads vão para a pasta TaylorAI/models do seu usuário e aparecem na lista da esquerda.",
+        ]),
+      ]),
+    ]),
+  );
+  $("#hub-go").addEventListener("click", hubSearch);
+  $<HTMLInputElement>("#hub-q").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") hubSearch();
+  });
+}
+
+async function hubSearch() {
+  const q = $<HTMLInputElement>("#hub-q").value.trim();
+  if (!q) return;
+  const box = $("#hub-results");
+  box.innerHTML = "Buscando…";
+  try {
+    const models = await invoke<HubModel[]>("hf_search", { query: q });
+    box.innerHTML = "";
+    if (!models.length) {
+      box.append(h("div", { class: "muted pad" }, ["Nada encontrado."]));
+      return;
+    }
+    for (const m of models) box.append(hubCard(m));
+  } catch (e) {
+    box.innerHTML = "";
+    box.append(h("div", { class: "warn-txt pad" }, [String(e)]));
+  }
+}
+
+function hubCard(m: HubModel): HTMLElement {
+  const files = h("div", { class: "hub-files hidden" }, []);
+  let loaded = false;
+  return h("div", { class: "hub-card" }, [
+    h(
+      "div",
+      {
+        class: "hub-head",
+        onClick: async () => {
+          files.classList.toggle("hidden");
+          if (loaded || files.classList.contains("hidden")) return;
+          files.innerHTML = "Carregando arquivos…";
+          try {
+            const fs = await invoke<HubFile[]>("hf_list_files", { repo: m.id });
+            loaded = true;
+            files.innerHTML = "";
+            if (!fs.length) {
+              files.append(
+                h("div", { class: "muted" }, ["Sem arquivos .gguf neste repositório."]),
+              );
+            }
+            for (const f of fs) files.append(hubFileRow(m.id, f));
+          } catch (e) {
+            files.innerHTML = "";
+            files.append(h("div", { class: "warn-txt" }, [String(e)]));
+          }
+        },
+      },
+      [
+        h("div", { class: "hub-id" }, [m.id]),
+        h("div", { class: "hub-meta" }, [
+          `⬇ ${fmtCount(m.downloads)} · ♥ ${fmtCount(m.likes)}`,
+        ]),
+      ],
+    ),
+    files,
+  ]);
+}
+
+function fmtCount(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
+}
+
+function hubFileRow(repo: string, f: HubFile): HTMLElement {
+  return h("div", { class: "hub-file" }, [
+    h("span", { class: "hub-fname", title: f.path }, [f.path]),
+    h("span", { class: "hub-fsize" }, [
+      f.size_gb ? `${f.size_gb.toFixed(2)} GB` : "?",
+    ]),
+    h(
+      "button",
+      {
+        class: "mini",
+        onClick: async () => {
+          if (state.hubActive) {
+            addLog("[hub] ja existe um download em andamento");
+            return;
+          }
+          try {
+            const dest = await invoke<string>("default_download_dir");
+            await invoke("hf_download", { repo, file: f.path, destDir: dest });
+            state.hubActive = `${repo}::${f.path}`;
+            showHubStatus(f.path, 0, f.size_bytes || null);
+          } catch (e) {
+            addLog(`[hub] ${e}`);
+          }
+        },
+      },
+      ["Baixar"],
+    ),
+  ]);
+}
+
+function showHubStatus(file: string, downloaded: number, total: number | null) {
+  const s = $("#hub-status");
+  if (!s) return;
+  s.classList.remove("hidden");
+  const pct = total ? Math.min(100, (downloaded / total) * 100) : 0;
+  const label = total
+    ? `${(downloaded / 1e9).toFixed(2)} / ${(total / 1e9).toFixed(2)} GB (${pct.toFixed(0)}%)`
+    : `${(downloaded / 1e9).toFixed(2)} GB`;
+  s.innerHTML = "";
+  s.append(
+    h("div", { class: "hub-status-row" }, [
+      h("span", { class: "hub-fname", title: file }, [`Baixando ${file}`]),
+      h("span", {}, [label]),
+      h(
+        "button",
+        { class: "mini", onClick: () => invoke("hf_cancel_download") },
+        ["Cancelar"],
+      ),
+    ]),
+    h("div", { class: "bar" }, [
+      h("div", { class: "bar-fill", style: `width:${pct}%` }),
+    ]),
+  );
+}
+
 // ---------- Init ----------
 async function init() {
   buildShell();
   const savedSamp = JSON.parse(localStorage.getItem(SAMPLING_KEY) || "null");
   if (savedSamp) state.sampling = { ...state.sampling, ...savedSamp };
 
-  // carrega conversas salvas (ou cria a primeira)
-  const savedConvs = JSON.parse(localStorage.getItem(CONVS_KEY) || "null");
+  // carrega conversas salvas: arquivo em disco primeiro; localStorage como
+  // fallback (e migracao automatica de quem vinha de versoes antigas)
+  let savedConvs: Conversation[] | null = null;
+  try {
+    const disk = await invoke<string | null>("load_conversations");
+    if (disk) savedConvs = JSON.parse(disk);
+  } catch {}
+  if (!savedConvs || !Array.isArray(savedConvs) || !savedConvs.length) {
+    savedConvs = JSON.parse(localStorage.getItem(CONVS_KEY) || "null");
+  }
   if (savedConvs && Array.isArray(savedConvs) && savedConvs.length) {
     state.conversations = savedConvs;
     state.activeConvId = savedConvs[0].id;
@@ -1076,6 +1429,41 @@ async function init() {
   await listen<string>("server-log", (e) => addLog(e.payload));
   await listen<boolean>("server-ready", () =>
     addLog("[taylorai] servidor sinalizou pronto"),
+  );
+  await listen<{ file: string; downloaded: number; total: number | null }>(
+    "hub-progress",
+    (e) => showHubStatus(e.payload.file, e.payload.downloaded, e.payload.total),
+  );
+  await listen<{ file: string; path: string | null; error: string | null }>(
+    "hub-done",
+    (e) => {
+      state.hubActive = null;
+      const s = $("#hub-status");
+      if (e.payload.error) {
+        addLog(`[hub] ${e.payload.error}`);
+        if (s) {
+          s.classList.remove("hidden");
+          s.innerHTML = "";
+          s.append(h("div", { class: "warn-txt" }, [e.payload.error]));
+        }
+      } else {
+        addLog(`[hub] download concluído: ${e.payload.path}`);
+        if (s) {
+          s.classList.remove("hidden");
+          s.innerHTML = "";
+          s.append(h("div", {}, [`✓ Baixado: ${e.payload.path}`]));
+        }
+        // garante que a pasta de downloads esta monitorada e re-escaneia
+        invoke<string>("default_download_dir").then((d) => {
+          if (!state.dirs.includes(d)) {
+            state.dirs.push(d);
+            saveDirs();
+            renderDirs();
+          }
+          scan();
+        });
+      }
+    },
   );
 
   await loadHardware();

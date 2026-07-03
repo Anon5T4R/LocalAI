@@ -127,7 +127,17 @@ fn build_args(cfg: &LlamaConfig) -> Vec<String> {
     a
 }
 
-pub fn start(app: &AppHandle, cfg: LlamaConfig) -> Result<RunningInfo, String> {
+/// Verifica se a porta esta livre; se nao, procura a proxima livre (ate +50).
+fn pick_free_port(preferred: u16) -> u16 {
+    for p in preferred..preferred.saturating_add(50) {
+        if std::net::TcpListener::bind(("127.0.0.1", p)).is_ok() {
+            return p;
+        }
+    }
+    preferred
+}
+
+pub fn start(app: &AppHandle, mut cfg: LlamaConfig) -> Result<RunningInfo, String> {
     let state = app.state::<ServerState>();
     // ja rodando?
     {
@@ -135,6 +145,19 @@ pub fn start(app: &AppHandle, cfg: LlamaConfig) -> Result<RunningInfo, String> {
         if guard.is_some() {
             return Err("Ja existe um servidor rodando. Pare-o antes de iniciar outro.".into());
         }
+    }
+
+    // porta ocupada por outro app? escolhe a proxima livre e avisa
+    let free = pick_free_port(cfg.port);
+    if free != cfg.port {
+        let _ = app.emit(
+            "server-log",
+            format!(
+                "[taylorai] porta {} ocupada; usando {} no lugar.",
+                cfg.port, free
+            ),
+        );
+        cfg.port = free;
     }
 
     let bin_dir = resolve_binaries_dir(app)
@@ -251,15 +274,16 @@ pub fn health_ok(port: u16) -> bool {
     }
 }
 
-// Orcamento de memoria enderecavel pela iGPU (Vulkan), detectado uma vez via
-// `llama-server --list-devices` e cacheado. Ex.: Vega -> ~10.9 GB (GTT/UMA).
-static GPU_BUDGET_GB: OnceLock<Option<f64>> = OnceLock::new();
+// Orcamento de memoria enderecavel pela GPU (Vulkan) + nome do device,
+// detectado uma vez via `llama-server --list-devices` e cacheado.
+// Ex. iGPU Vega: ~10.9 GB (GTT/UMA).
+static GPU_INFO: OnceLock<Option<(f64, String)>> = OnceLock::new();
 
-pub fn vulkan_budget_gb(app: &AppHandle) -> Option<f64> {
-    *GPU_BUDGET_GB.get_or_init(|| detect_vulkan_budget_gb(app))
+pub fn vulkan_gpu(app: &AppHandle) -> Option<(f64, String)> {
+    GPU_INFO.get_or_init(|| detect_vulkan_gpu(app)).clone()
 }
 
-fn detect_vulkan_budget_gb(app: &AppHandle) -> Option<f64> {
+fn detect_vulkan_gpu(app: &AppHandle) -> Option<(f64, String)> {
     let bin_dir = resolve_binaries_dir(app)?;
     let mut cmd = Command::new(bin_dir.join(LLAMA_SERVER_BIN));
     cmd.arg("--list-devices").current_dir(&bin_dir);
@@ -271,8 +295,9 @@ fn detect_vulkan_budget_gb(app: &AppHandle) -> Option<f64> {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    // Procura "(<total> MiB, <free> MiB free)" numa linha de device Vulkan e
-    // usa o "free" como orcamento.
+    // Procura "(<total> MiB, <free> MiB free)" numa linha de device Vulkan;
+    // usa o "free" como orcamento e o texto entre "NomeBackend: " e o grupo de
+    // memoria como nome do device (ex.: "AMD Radeon(TM) Graphics (RADV ...)").
     for line in text.lines() {
         if !line.to_lowercase().contains("vulkan") {
             continue;
@@ -289,7 +314,18 @@ fn detect_vulkan_budget_gb(app: &AppHandle) -> Option<f64> {
                 .rev()
                 .collect();
             if let Ok(mib) = digits.parse::<f64>() {
-                return Some(mib * 1_048_576.0 / 1e9); // MiB -> GB
+                // nome: depois do primeiro ": " e antes do ultimo "(" (grupo de memoria)
+                let name = {
+                    let after = line.split_once(": ").map(|(_, r)| r).unwrap_or(line);
+                    let cut = after.rfind('(').unwrap_or(after.len());
+                    after[..cut].trim().to_string()
+                };
+                let name = if name.is_empty() {
+                    "GPU Vulkan".to_string()
+                } else {
+                    name
+                };
+                return Some((mib * 1_048_576.0 / 1e9, name)); // MiB -> GB
             }
         }
     }

@@ -1,6 +1,7 @@
 // Auto-tuner: dado o hardware + o modelo GGUF, calcula os flags do
-// llama-server que extraem o maximo de uma CPU/iGPU (foco: Ryzen 5 5500U,
-// Zen 2, AVX2, sem AVX-512, banda de memoria DDR4-2667 como gargalo).
+// llama-server que extraem o maximo da maquina detectada. As heuristicas
+// assumem que geracao e memory-bound (banda de RAM como gargalo) e que
+// prompt e compute-bound — vale para CPUs x86/ARM e APUs/iGPUs em geral.
 
 use crate::gguf::ModelInfo;
 use crate::hardware::HardwareInfo;
@@ -152,14 +153,20 @@ pub fn recommend(
         0.0
     };
 
-    // --- GPU offload (Vulkan / Vega) ---
-    // Medido neste hardware (Qwen 9B Q6): offload TOTAL deu ~+40% de geracao e
-    // ~+23% de prompt vs CPU puro; offload PARCIAL ficou ABAIXO do CPU.
-    // Conclusao: na Vega e tudo-ou-nada.
+    // --- GPU offload (Vulkan) ---
+    // Em iGPUs/APUs (memoria compartilhada, UMA): offload TOTAL costuma render
+    // bem mais que CPU puro, mas offload PARCIAL costuma render MENOS (overhead
+    // de split + banda compartilhada) — e "tudo-ou-nada". Em GPUs dedicadas,
+    // offload parcial e um meio-termo valido quando o modelo nao cabe na VRAM.
+    let gpu_label = hw
+        .gpu_name
+        .clone()
+        .unwrap_or_else(|| "GPU (Vulkan)".to_string());
+    let is_igpu = hw.gpu_is_igpu;
     let max_gpu_layers = model.block_count.map(|b| b + 1).unwrap_or(0);
-    // Orcamento real da iGPU (detectado via Vulkan), com fallback ~metade da RAM.
+    // Orcamento real da GPU (detectado via Vulkan), com fallback ~metade da RAM.
     let gpu_budget_gb = hw.gpu_budget_gb;
-    // o rascunho fica na CPU (RAM normal), entao nao pesa no orcamento da iGPU
+    // o rascunho fica na CPU (RAM normal), entao nao pesa no orcamento da GPU
     let fits_gpu = max_gpu_layers > 0 && (model.size_gb + kv_gb) < gpu_budget_gb * 0.92;
     let gpu_recommended = fits_gpu;
     let gpu_on = ov.gpu_offload.unwrap_or(fits_gpu);
@@ -167,27 +174,35 @@ pub fn recommend(
         let n = ov.n_gpu_layers.unwrap_or(max_gpu_layers).min(max_gpu_layers);
         if n >= max_gpu_layers {
             rationale.push(format!(
-                "Offload Vulkan TOTAL: {} camadas na Vega. No benchmark desta maquina rendeu ~40% mais geracao e ~23% mais prompt que CPU puro (o modelo cabe no orcamento ~{:.1} GB da iGPU).",
-                n, gpu_budget_gb
+                "Offload Vulkan TOTAL: {} camadas em {} (o modelo + KV cabem no orcamento de ~{:.1} GB da GPU). Com tudo na GPU, evita o overhead de dividir o grafo entre CPU e GPU.",
+                n, gpu_label, gpu_budget_gb
             ));
         } else {
             rationale.push(format!(
-                "Offload Vulkan PARCIAL: {} de {} camadas.",
-                n, max_gpu_layers
+                "Offload Vulkan PARCIAL: {} de {} camadas em {}.",
+                n, max_gpu_layers, gpu_label
             ));
-            warnings.push(
-                "Offload PARCIAL nesta APU costuma render MENOS que CPU puro (overhead de split + banda compartilhada). Prefira TOTAL (todas as camadas) ou ngl=0.".to_string(),
-            );
+            if is_igpu {
+                warnings.push(
+                    "Em GPUs integradas (memoria compartilhada com a CPU), offload PARCIAL costuma render MENOS que CPU puro. Prefira TOTAL (todas as camadas) ou ngl=0.".to_string(),
+                );
+            }
         }
         n
     } else {
         if fits_gpu {
-            rationale.push(
-                "CPU puro (ngl=0) por sua escolha. Dica: neste modelo o offload TOTAL na Vega tende a ser mais rapido.".to_string(),
-            );
+            rationale.push(format!(
+                "CPU puro (ngl=0) por sua escolha. Dica: este modelo cabe na {} — offload TOTAL tende a ser mais rapido.",
+                gpu_label
+            ));
+        } else if is_igpu {
+            rationale.push(format!(
+                "CPU puro (ngl=0): o modelo ({:.1} GB) nao cabe no orcamento da GPU (~{:.1} GB) e, em GPUs integradas, offload parcial costuma render menos que CPU puro.",
+                model.size_gb, gpu_budget_gb
+            ));
         } else {
             rationale.push(format!(
-                "CPU puro (ngl=0): o modelo ({:.1} GB) nao cabe no orcamento da iGPU (~{:.1} GB); offload total nao e viavel aqui.",
+                "CPU puro (ngl=0): o modelo ({:.1} GB) nao cabe inteiro na VRAM (~{:.1} GB). Em GPU dedicada, vale testar offload parcial no controle acima.",
                 model.size_gb, gpu_budget_gb
             ));
         }
@@ -212,17 +227,17 @@ pub fn recommend(
     }
 
     // --- mlock / mmap ---
-    // CRITICO: mlock SO no modo CPU. Com offload o modelo vai para a memoria da
-    // iGPU (GTT = mesma RAM fisica); travar a copia da CPU dobra o uso de RAM e
+    // CRITICO: mlock SO no modo CPU. Com offload em iGPU o modelo vai para o
+    // GTT (mesma RAM fisica); travar a copia da CPU dobra o uso de RAM e
     // trava o carregamento (medido: timeout vs 8s sem mlock).
     let mlock = n_gpu_layers == 0 && fits_in_ram && est_ram_gb < hw.total_ram_gb * 0.72;
     if mlock {
         rationale.push(
-            "--mlock ligado: trava o modelo na RAM e impede o Windows de paginar para o disco (evita engasgos). So no modo CPU, onde sobra RAM.".to_string(),
+            "--mlock ligado: trava o modelo na RAM e impede o sistema de paginar para o disco (evita engasgos). So no modo CPU, onde sobra RAM.".to_string(),
         );
     } else if n_gpu_layers > 0 {
         rationale.push(
-            "--mlock desligado: com offload na iGPU, o modelo vai para o GTT (mesma RAM fisica). Travar a copia da CPU dobraria o uso de memoria e travaria o load.".to_string(),
+            "--mlock desligado: com offload, o modelo vai para a memoria da GPU (em iGPUs, a mesma RAM fisica via GTT). Travar tambem a copia da CPU dobraria o uso de memoria.".to_string(),
         );
     } else {
         rationale.push(
@@ -244,15 +259,6 @@ pub fn recommend(
         batch, ubatch
     ));
 
-    // --- Dica de energia ---
-    warnings.push(
-        "Dica: rode no modo de energia 'Melhor desempenho' e na tomada — o boost do 5500U cai bastante na bateria.".to_string(),
-    );
-    // --- Dica de RAM assimetrica ---
-    warnings.push(
-        "Sua RAM e assimetrica (16+4 GB): parte roda em single-channel, limitando a banda. E o teto fisico de tok/s nesta maquina.".to_string(),
-    );
-
     // --- Visao (mmproj) opt-in ---
     let use_mmproj = ov.use_mmproj.unwrap_or(false);
     let mmproj = if use_mmproj {
@@ -272,12 +278,12 @@ pub fn recommend(
         }
     }
 
-    // O rascunho (pequeno) fica SEMPRE na CPU: preserva o GTT da iGPU para o
-    // modelo grande e evita dobrar o uso de memoria (que travava o load).
+    // O rascunho (pequeno) fica SEMPRE na CPU: preserva a memoria da GPU para
+    // o modelo grande e evita dobrar o uso de memoria (que travava o load).
     let draft_n_gpu_layers = 0u32;
     if use_speculative {
         rationale.push(
-            "Speculative decoding LIGADO: o rascunho (na CPU) propoe ate 16 tokens por passo e o modelo grande (na iGPU) verifica todos numa unica leitura de memoria. Como o gargalo aqui e banda de memoria, isso tende a acelerar a geracao sem perder qualidade.".to_string(),
+            "Speculative decoding LIGADO: o rascunho (na CPU) propoe ate 16 tokens por passo e o modelo grande verifica todos numa unica leitura de memoria. Como o gargalo da geracao e banda de memoria, isso tende a acelerar sem perder qualidade.".to_string(),
         );
         warnings.push(
             "Ganho do speculative depende da taxa de aceitacao do rascunho (alto em texto previsivel/codigo, menor em conteudo muito aberto).".to_string(),

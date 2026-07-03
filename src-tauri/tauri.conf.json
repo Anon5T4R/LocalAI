@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TaylorAI Studio",
-  "version": "0.1.11",
+  "version": "0.2.0",
   "identifier": "com.taylorai.studio",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "TaylorAI Studio — GGUF na CPU/iGPU",
+        "title": "TaylorAI Studio",
         "width": 1180,
         "height": 800,
         "minWidth": 900,
@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:*"
     }
   },
   "bundle": {

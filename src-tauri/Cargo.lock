@@ -3717,7 +3717,7 @@ dependencies = [
 
 [[package]]
 name = "taylorai-studio"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "raw-cpuid",
  "rfd",
@@ -4192,6 +4192,8 @@ dependencies = [
  "once_cell",
  "rustls",
  "rustls-pki-types",
+ "serde",
+ "serde_json",
  "url",
  "webpki-roots 0.26.11",
 ]

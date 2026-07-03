@@ -1,18 +1,19 @@
 mod gguf;
 mod hardware;
+mod hub;
 mod server;
 mod tuner;
 
 use gguf::ModelInfo;
 use hardware::HardwareInfo;
 use server::{RunningInfo, ServerState, StatusReport};
-use tauri::{AppHandle, RunEvent};
+use tauri::{AppHandle, Manager, RunEvent};
 use tuner::{LlamaConfig, Recommendation, TuneOverrides};
 
 #[tauri::command]
 fn get_hardware(app: AppHandle) -> HardwareInfo {
-    let budget = server::vulkan_budget_gb(&app);
-    hardware::get_hardware(budget)
+    let gpu = server::vulkan_gpu(&app);
+    hardware::get_hardware(gpu)
 }
 
 #[tauri::command]
@@ -26,9 +27,62 @@ fn recommend_config(
     model: ModelInfo,
     overrides: TuneOverrides,
 ) -> Recommendation {
-    let budget = server::vulkan_budget_gb(&app);
-    let hw = hardware::get_hardware(budget);
+    let gpu = server::vulkan_gpu(&app);
+    let hw = hardware::get_hardware(gpu);
     tuner::recommend(&hw, &model, &overrides)
+}
+
+// ---------- Hugging Face Hub ----------
+
+#[tauri::command]
+fn hf_search(query: String) -> Result<Vec<hub::HubModel>, String> {
+    hub::search(&query)
+}
+
+#[tauri::command]
+fn hf_list_files(repo: String) -> Result<Vec<hub::HubFile>, String> {
+    hub::list_files(&repo)
+}
+
+#[tauri::command]
+fn hf_download(
+    app: AppHandle,
+    repo: String,
+    file: String,
+    dest_dir: String,
+) -> Result<(), String> {
+    hub::download(app, repo, file, dest_dir)
+}
+
+#[tauri::command]
+fn hf_cancel_download() {
+    hub::cancel();
+}
+
+// ---------- Persistencia de conversas (arquivo no app_data_dir) ----------
+// localStorage do WebView pode ser limpo pelo sistema; arquivo e mais seguro.
+
+fn conversations_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Sem diretorio de dados do app: {e}"))?;
+    Ok(dir.join("conversations.json"))
+}
+
+#[tauri::command]
+fn load_conversations(app: AppHandle) -> Option<String> {
+    let path = conversations_path(&app).ok()?;
+    std::fs::read_to_string(path).ok()
+}
+
+#[tauri::command]
+fn save_conversations(app: AppHandle, json: String) -> Result<(), String> {
+    let path = conversations_path(&app)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("Nao criei {dir:?}: {e}"))?;
+    }
+    std::fs::write(&path, json).map_err(|e| format!("Nao gravei as conversas: {e}"))
 }
 
 #[tauri::command]
@@ -64,16 +118,19 @@ fn default_model_dirs() -> Vec<String> {
         }
     };
 
-    // LM Studio em varias unidades (so Windows)
+    // Pastas do LM Studio em qualquer unidade montada (so Windows)
     #[cfg(windows)]
-    for drive in ["C", "D", "E"] {
-        push_if_exists(std::path::PathBuf::from(format!(
-            "{drive}:\\LocalAIModels\\.lmstudio\\hub\\models"
-        )));
+    for drive in 'A'..='Z' {
+        let root = std::path::PathBuf::from(format!("{drive}:\\"));
+        if !root.exists() {
+            continue;
+        }
+        push_if_exists(root.join("LocalAIModels").join(".lmstudio").join("hub").join("models"));
     }
     // home: USERPROFILE no Windows, HOME no Linux/macOS
     if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
         let home = std::path::PathBuf::from(home);
+        push_if_exists(home.join(".lmstudio").join("models"));
         push_if_exists(home.join(".lmstudio").join("hub").join("models"));
         push_if_exists(home.join(".cache").join("lm-studio").join("models"));
         push_if_exists(
@@ -81,8 +138,23 @@ fn default_model_dirs() -> Vec<String> {
                 .join("huggingface")
                 .join("hub"),
         );
+        // pasta propria do TaylorAI (destino padrao dos downloads)
+        push_if_exists(home.join("TaylorAI").join("models"));
     }
     out
+}
+
+/// Pasta padrao para salvar downloads: a primeira pasta de modelos do usuario
+/// ou ~/TaylorAI/models (criada na hora).
+#[tauri::command]
+fn default_download_dir() -> String {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let dir = home.join("TaylorAI").join("models");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.to_string_lossy().into_owned()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -121,7 +193,14 @@ pub fn run() {
             stop_server,
             server_status,
             pick_folder,
-            default_model_dirs
+            default_model_dirs,
+            default_download_dir,
+            hf_search,
+            hf_list_files,
+            hf_download,
+            hf_cancel_download,
+            load_conversations,
+            save_conversations
         ])
         .build(tauri::generate_context!())
         .expect("erro ao inicializar o TaylorAI Studio")
