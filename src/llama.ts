@@ -175,15 +175,15 @@ export async function* streamChat(
     min_p: params.min_p,
     repeat_penalty: params.repeat_penalty,
     max_tokens: params.max_tokens,
-    // Controle de reasoning por request (llama-server):
-    //   reasoning_budget = 0  -> encerra o pensamento na hora (resposta direta)
-    //   reasoning_budget = -1 -> pensamento livre
-    // Funciona nos Qwen3 / 3.5 / 3.6 e familias hibridas SEM reiniciar o
-    // servidor. O enable_thinking via template e reforco para modelos cujo
-    // chat template decide pelo kwarg. Para templates que ignoram ambos,
-    // o ThinkFilter acima captura o <think> cru no stream (fallback).
+    // Controle PRINCIPAL do reasoning e o flag de servidor `--reasoning on|off`
+    // (definido no start, a partir do toggle da UI) — ver src-tauri/src/server.rs.
+    // Motivo: nos builds atuais o controle por-request foi deprecado/ignorado no
+    // Qwen3.5/3.6 (o proprio servidor manda usar --reasoning). Aqui mantemos so
+    // `reasoning_budget` como reforco (0 = resposta direta, -1 = livre); NAO
+    // enviamos mais `chat_template_kwargs.enable_thinking` (deprecado -> aviso
+    // nos logs e sem efeito). Para templates que ignoram tudo, o ThinkFilter
+    // acima captura o <think> cru no stream (fallback).
     reasoning_budget: think ? -1 : 0,
-    chat_template_kwargs: { enable_thinking: think },
   };
 
   const resp = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
