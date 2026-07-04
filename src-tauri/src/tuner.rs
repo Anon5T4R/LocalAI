@@ -31,11 +31,6 @@ pub struct LlamaConfig {
     pub draft_model: Option<String>,
     pub draft_n_gpu_layers: u32,
     pub draft_max: u32,
-    /// Reasoning/"pensamento" ligado? Vira `--reasoning on|off` no start do
-    /// servidor (unico controle confiavel; per-request foi deprecado). Default
-    /// = desligado (hardware fraco). O frontend sobrescreve com o toggle da UI.
-    #[serde(default)]
-    pub think: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -317,7 +312,6 @@ pub fn recommend(
         draft_model: if use_speculative { draft_path } else { None },
         draft_n_gpu_layers,
         draft_max: 16,
-        think: false, // opt-in; o frontend liga via toggle e reinicia o servidor
     };
 
     Recommendation {

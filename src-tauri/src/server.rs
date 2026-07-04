@@ -118,19 +118,12 @@ fn build_args(cfg: &LlamaConfig) -> Vec<String> {
         push(&mut a, "--spec-draft-n-max", cfg.draft_max.to_string());
     }
 
-    // Liga/desliga o "pensamento" no NIVEL DO SERVIDOR. Este e o unico jeito
-    // confiavel nos builds atuais do llama.cpp: o controle por-request
-    // (`reasoning_budget`/`chat_template_kwargs.enable_thinking` no corpo) foi
-    // DEPRECADO e e IGNORADO em modelos como o Qwen3.5/3.6 — o servidor manda
-    // usar justamente `--reasoning on|off` (que NAO e per-request, so no start).
-    // Por isso o think agora e um flag de inicializacao: o toggle da UI reinicia
-    // o servidor. `off` garante o default sem pensar em hardware fraco.
-    push(
-        &mut a,
-        "--reasoning",
-        if cfg.think { "on" } else { "off" }.to_string(),
-    );
-
+    // NB: o no-think NAO e controlado aqui. Testado (2026-07-04): nos builds
+    // atuais do llama.cpp (b9723) o `--reasoning off` NAO desliga o pensamento
+    // do Qwen3.5 (arch qwen35) — o servidor nao injeta `enable_thinking=false`
+    // no template jinja (bug; ver issues #20182/#20409). O controle confiavel e
+    // por-request via PREFILL do turno assistant com <think></think> fechado,
+    // feito em src/llama.ts (funciona porque --prefill-assistant e default on).
     push(&mut a, "--host", cfg.host.clone());
     push(&mut a, "--port", cfg.port.to_string());
     // metricas detalhadas no /props e nas respostas

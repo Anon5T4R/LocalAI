@@ -74,7 +74,6 @@ interface LlamaConfig {
   draft_model: string | null;
   draft_n_gpu_layers: number;
   draft_max: number;
-  think: boolean;
 }
 interface Recommendation {
   config: LlamaConfig;
@@ -730,7 +729,6 @@ function argsPreview(c: LlamaConfig): string {
       "--draft-max",
       String(c.draft_max),
     );
-  a.push("--reasoning", c.think ? "on" : "off");
   a.push("--host", c.host, "--port", String(c.port));
   return a.join(" ");
 }
@@ -818,8 +816,6 @@ async function loadServer() {
   $("#load-btn").textContent = "Subindo…";
   $("#load-btn").setAttribute("disabled", "true");
   addLog(`\n=== Carregando ${state.rec.config.model_name} ===`);
-  // reasoning e flag de start (--reasoning on|off); aplica o toggle atual
-  state.rec.config.think = state.think;
   try {
     const info = await invoke<RunningInfo>("start_server", {
       config: state.rec.config,
@@ -921,23 +917,16 @@ function buildChatView() {
         }, [state.systemPrompt]),
         h("label", { class: "ctrl toggle", style: "margin-top:8px" }, [
           h("span", {}, [
-            "Modo raciocínio (pensar) — desligado por padrão (--reasoning off; reinicia o servidor)",
+            "Modo raciocínio (pensar) — desligado por padrão (aplica na hora, sem reiniciar)",
           ]),
           h("input", {
             type: "checkbox",
             checked: state.think, // false por padrao (opt-in)
-            onChange: async (e: Event) => {
+            onChange: (e: Event) => {
+              // No-think e per-request (prefill <think></think> em llama.ts):
+              // aplica no proximo envio, sem reiniciar o servidor.
               state.think = (e.target as HTMLInputElement).checked;
               localStorage.setItem(THINK_KEY, state.think ? "1" : "0");
-              // --reasoning e flag de start: reinicia o servidor para aplicar.
-              const status = await invoke<StatusReport>("server_status");
-              if (status.running && !state.busy) {
-                addLog(
-                  `[taylorai] raciocínio ${state.think ? "ligado" : "desligado"}; reiniciando servidor…`,
-                );
-                await stopServer();
-                await loadServer();
-              }
             },
           }),
         ]),
@@ -1129,8 +1118,8 @@ async function send() {
   const msgs: ChatMessage[] = [
     // so envia system message se houver conteudo
     ...(sysContent ? [{ role: "system" as const, content: sysContent }] : []),
-    // historico cru: o controle de pensar/nao-pensar vai via reasoning_budget
-    // no corpo do request (ver streamChat), nao mais injetado no texto.
+    // historico cru: o no-think e aplicado em streamChat (prefill do turno
+    // assistant com <think></think> fechado), nao injetado neste texto.
     ...conv.messages,
   ];
 

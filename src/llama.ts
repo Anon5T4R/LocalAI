@@ -162,10 +162,25 @@ export async function* streamChat(
   signal: AbortSignal,
   think: boolean = false,
 ): AsyncGenerator<StreamChunk> {
+  // reasoning capturado e so para UI/persistencia — nao vai para a API
+  const apiMessages: Array<{ role: string; content: string | ContentPart[] }> =
+    messages.map(({ role, content }) => ({ role, content }));
+
+  // NO-THINK MECANICO (fallback que NAO depende do modelo respeitar flag algum):
+  // quando o pensamento esta desligado, faz PREFILL do turno do assistant com um
+  // bloco <think></think> JA FECHADO. O llama-server continua o ultimo turno
+  // assistant (--prefill-assistant, ligado por padrao), entao o modelo retoma
+  // DEPOIS do </think> e vai direto para a resposta — sem chance de reabrir
+  // pensamento. Funciona onde --reasoning off / reasoning_budget sao ignorados
+  // (finetunes Qwen3.5/3.6 com template proprio). O bloco fica no PROMPT, nao no
+  // texto gerado, entao a resposta sai limpa.
+  if (!think) {
+    apiMessages.push({ role: "assistant", content: "<think>\n\n</think>\n\n" });
+  }
+
   const body = {
     model: "local",
-    // reasoning capturado e so para UI/persistencia — nao vai para a API
-    messages: messages.map(({ role, content }) => ({ role, content })),
+    messages: apiMessages,
     stream: true,
     stream_options: { include_usage: true },
     cache_prompt: true,
@@ -175,14 +190,11 @@ export async function* streamChat(
     min_p: params.min_p,
     repeat_penalty: params.repeat_penalty,
     max_tokens: params.max_tokens,
-    // Controle PRINCIPAL do reasoning e o flag de servidor `--reasoning on|off`
-    // (definido no start, a partir do toggle da UI) — ver src-tauri/src/server.rs.
-    // Motivo: nos builds atuais o controle por-request foi deprecado/ignorado no
-    // Qwen3.5/3.6 (o proprio servidor manda usar --reasoning). Aqui mantemos so
-    // `reasoning_budget` como reforco (0 = resposta direta, -1 = livre); NAO
-    // enviamos mais `chat_template_kwargs.enable_thinking` (deprecado -> aviso
-    // nos logs e sem efeito). Para templates que ignoram tudo, o ThinkFilter
-    // acima captura o <think> cru no stream (fallback).
+    // O no-think REAL vem do prefill acima. `reasoning_budget` fica so como
+    // reforco para modelos que ainda o respeitam (0 = resposta direta, -1 =
+    // livre). NAO enviamos `chat_template_kwargs.enable_thinking`: deprecado nos
+    // builds atuais (aviso nos logs e sem efeito no Qwen3.5). Ultimo fallback: o
+    // ThinkFilter acima captura o <think> cru no stream se algo escapar.
     reasoning_budget: think ? -1 : 0,
   };
 
