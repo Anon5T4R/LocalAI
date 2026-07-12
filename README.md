@@ -1,4 +1,6 @@
-# TaylorAI Studio
+# LocalAI Studio
+
+> Antes chamado TaylorAI Studio — renomeado para combinar com a suíte Local (LocalMind, LocalOffice…). Modelos já baixados em `~/TaylorAI/models` continuam sendo encontrados.
 
 Um "clone do LM Studio" enxuto, focado em **extrair o máximo de CPUs e iGPUs**
 rodando modelos **GGUF** via [llama.cpp](https://github.com/ggml-org/llama.cpp).
@@ -117,7 +119,7 @@ git tag v0.1.3 && git push origin v0.1.3   # dispara o CI multi-plataforma
 ## Modelos
 
 O app procura `.gguf` nas pastas padrão do LM Studio e do cache do Hugging
-Face, na pasta `~/TaylorAI/models` (destino dos downloads da aba **Baixar
+Face, na pasta `~/LocalAI/models` (destino dos downloads da aba **Baixar
 modelos**) e em qualquer pasta que você adicionar. Modelos com arquivo
 `mmproj-*` são multimodais (visão) e o app passa `--mmproj` quando você os
 carrega com a visão ligada.

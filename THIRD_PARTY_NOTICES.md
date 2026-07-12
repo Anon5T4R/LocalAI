@@ -1,6 +1,6 @@
 # Avisos de terceiros (Third-Party Notices)
 
-O TaylorAI Studio é distribuído sob a licença MIT (ver `LICENSE`) e
+O LocalAI Studio é distribuído sob a licença MIT (ver `LICENSE`) e
 redistribui/depende dos componentes abaixo. Os textos completos das licenças
 estão nos repositórios de cada projeto.
 
@@ -10,7 +10,7 @@ estão nos repositórios de cada projeto.
 - Licença: MIT
 - Copyright (c) 2023-2024 The ggml authors / Georgi Gerganov
 - https://github.com/ggml-org/llama.cpp
-- Os instaladores do TaylorAI Studio incluem binários oficiais do llama.cpp
+- Os instaladores do LocalAI Studio incluem binários oficiais do llama.cpp
   (pasta `binaries/`), baixados dos releases do projeto sem modificação.
 
 ## Dependências (Rust)

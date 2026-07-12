@@ -3716,7 +3716,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "taylorai-studio"
+name = "localai-studio"
 version = "0.2.2"
 dependencies = [
  "raw-cpuid",

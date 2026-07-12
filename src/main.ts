@@ -173,11 +173,11 @@ function h<K extends keyof HTMLElementTagNameMap>(
 const $ = <T extends HTMLElement>(sel: string) =>
   document.querySelector(sel) as T;
 
-const DIRS_KEY = "taylorai.dirs";
-const SAMPLING_KEY = "taylorai.sampling";
-const CONVS_KEY = "taylorai.conversations";
-const SYS_KEY = "taylorai.sysprompt";
-const THINK_KEY = "taylorai.think";
+const DIRS_KEY = "localai.dirs";
+const SAMPLING_KEY = "localai.sampling";
+const CONVS_KEY = "localai.conversations";
+const SYS_KEY = "localai.sysprompt";
+const THINK_KEY = "localai.think";
 
 // preferencias persistidas (o system prompt sumia a cada restart)
 state.systemPrompt = localStorage.getItem(SYS_KEY) ?? "";
@@ -314,7 +314,7 @@ function buildShell() {
         h("div", { class: "brand" }, [
           h("div", { class: "logo" }, ["⚡"]),
           h("div", {}, [
-            h("div", { class: "brand-title" }, ["TaylorAI Studio"]),
+            h("div", { class: "brand-title" }, ["LocalAI Studio"]),
             h("div", { class: "brand-sub" }, ["GGUF na CPU/iGPU"]),
           ]),
         ]),
@@ -822,7 +822,7 @@ async function loadServer() {
     });
     // o backend pode ter trocado a porta se a preferida estava ocupada
     if (info.port !== state.rec.config.port) {
-      addLog(`[taylorai] porta ajustada para ${info.port}`);
+      addLog(`[localai] porta ajustada para ${info.port}`);
       state.rec.config.port = info.port;
     }
     switchView("logs");
@@ -1273,7 +1273,7 @@ function buildHubView() {
       h("div", { id: "hub-status", class: "hub-status hidden" }, []),
       h("div", { id: "hub-results", class: "hub-results" }, [
         h("div", { class: "muted pad" }, [
-          "Busque um modelo para começar. Dica: repositórios \"GGUF\" prontos costumam vir de bartowski, unsloth e lmstudio-community. Os downloads vão para a pasta TaylorAI/models do seu usuário e aparecem na lista da esquerda.",
+          "Busque um modelo para começar. Dica: repositórios \"GGUF\" prontos costumam vir de bartowski, unsloth e lmstudio-community. Os downloads vão para a pasta LocalAI/models do seu usuário e aparecem na lista da esquerda.",
         ]),
       ]),
     ]),
@@ -1430,7 +1430,7 @@ async function init() {
 
   await listen<string>("server-log", (e) => addLog(e.payload));
   await listen<boolean>("server-ready", () =>
-    addLog("[taylorai] servidor sinalizou pronto"),
+    addLog("[localai] servidor sinalizou pronto"),
   );
   await listen<{ file: string; downloaded: number; total: number | null }>(
     "hub-progress",

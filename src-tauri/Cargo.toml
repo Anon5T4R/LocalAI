@@ -1,12 +1,12 @@
 [package]
-name = "taylorai-studio"
+name = "localai-studio"
 version = "0.2.2"
 description = "Runner de GGUF otimizado para CPU/iGPU (llama.cpp)"
 authors = ["joaof"]
 edition = "2021"
 
 [lib]
-name = "taylorai_studio_lib"
+name = "localai_studio_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

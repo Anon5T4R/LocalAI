@@ -138,21 +138,23 @@ fn default_model_dirs() -> Vec<String> {
                 .join("huggingface")
                 .join("hub"),
         );
-        // pasta propria do TaylorAI (destino padrao dos downloads)
+        // pasta propria do LocalAI (destino padrao dos downloads)
+        push_if_exists(home.join("LocalAI").join("models"));
+        // pasta da era TaylorAI (compat: modelos baixados antes do rebrand)
         push_if_exists(home.join("TaylorAI").join("models"));
     }
     out
 }
 
 /// Pasta padrao para salvar downloads: a primeira pasta de modelos do usuario
-/// ou ~/TaylorAI/models (criada na hora).
+/// ou ~/LocalAI/models (criada na hora).
 #[tauri::command]
 fn default_download_dir() -> String {
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let dir = home.join("TaylorAI").join("models");
+    let dir = home.join("LocalAI").join("models");
     let _ = std::fs::create_dir_all(&dir);
     dir.to_string_lossy().into_owned()
 }
@@ -203,7 +205,7 @@ pub fn run() {
             save_conversations
         ])
         .build(tauri::generate_context!())
-        .expect("erro ao inicializar o TaylorAI Studio")
+        .expect("erro ao inicializar o LocalAI Studio")
         .run(|app: &AppHandle, event| {
             if let RunEvent::ExitRequested { .. } = event {
                 server::kill_on_exit(app);

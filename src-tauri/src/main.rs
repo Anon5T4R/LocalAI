@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    taylorai_studio_lib::run()
+    localai_studio_lib::run()
 }

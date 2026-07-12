@@ -11,3 +11,6 @@ src-tauri/binaries/*
 
 # Workaround LOCAL p/ tirar o target/ do OneDrive (path Windows quebra o CI Linux/macOS)
 src-tauri/.cargo/config.toml
+
+# Claude Code
+.claude/

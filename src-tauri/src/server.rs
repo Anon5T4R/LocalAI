@@ -45,7 +45,7 @@ pub struct StatusReport {
 /// Resolve o diretorio onde estao llama-server.exe + DLLs.
 /// Ordem: variavel de ambiente -> ao lado do exe -> resource_dir -> arvore de dev.
 pub fn resolve_binaries_dir(app: &AppHandle) -> Option<PathBuf> {
-    if let Ok(env_dir) = std::env::var("TAYLORAI_LLAMA_DIR") {
+    if let Ok(env_dir) = std::env::var("LOCALAI_LLAMA_DIR") {
         let p = PathBuf::from(env_dir);
         if p.join(LLAMA_SERVER_BIN).exists() {
             return Some(p);
@@ -159,7 +159,7 @@ pub fn start(app: &AppHandle, mut cfg: LlamaConfig) -> Result<RunningInfo, Strin
         let _ = app.emit(
             "server-log",
             format!(
-                "[taylorai] porta {} ocupada; usando {} no lugar.",
+                "[localai] porta {} ocupada; usando {} no lugar.",
                 cfg.port, free
             ),
         );
@@ -219,7 +219,7 @@ pub fn start(app: &AppHandle, mut cfg: LlamaConfig) -> Result<RunningInfo, Strin
 
     let _ = app.emit(
         "server-log",
-        format!("[taylorai] iniciando: llama-server {}", args.join(" ")),
+        format!("[localai] iniciando: llama-server {}", args.join(" ")),
     );
 
     Ok(info)
@@ -233,7 +233,7 @@ pub fn stop(app: &AppHandle) -> Result<(), String> {
         let _ = child.wait();
     }
     *state.running.lock().unwrap() = None;
-    let _ = app.emit("server-log", "[taylorai] servidor encerrado.".to_string());
+    let _ = app.emit("server-log", "[localai] servidor encerrado.".to_string());
     Ok(())
 }
 

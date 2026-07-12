@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "TaylorAI Studio",
+  "productName": "LocalAI Studio",
   "version": "0.2.2",
-  "identifier": "com.taylorai.studio",
+  "identifier": "com.localai.studio",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "TaylorAI Studio",
+        "title": "LocalAI Studio",
         "width": 1180,
         "height": 800,
         "minWidth": 900,
