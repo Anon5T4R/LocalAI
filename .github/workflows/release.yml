@@ -66,7 +66,7 @@ jobs:
           node-version: 20
 
       - name: Instalar deps do frontend
-        run: npm install
+        run: npm ci
 
       - name: Baixar runtime do llama.cpp (Windows)
         if: runner.os == 'Windows'
@@ -89,6 +89,10 @@ jobs:
           # os tarballs extraem para uma pasta llama-<tag>/ ; achatamos com strip-components
           tar -xzf llama.tar.gz -C src-tauri/binaries --strip-components=1
           chmod +x src-tauri/binaries/llama-server || true
+
+      - name: Cargo.lock em dia (--locked)
+        working-directory: src-tauri
+        run: cargo fetch --locked
 
       - name: Build + anexar ao Release (tauri-action)
         uses: tauri-apps/tauri-action@v0
