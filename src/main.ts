@@ -11,6 +11,14 @@ import {
   type SamplingParams,
   type Usage,
 } from "./llama";
+import { t, localeTag, LOCALE_LABELS, getLocale, setLocale, type Locale } from "./lib/i18n";
+import {
+  initTheme,
+  cycleTheme,
+  themeIcon,
+  getThemePref,
+  type ThemePref,
+} from "./lib/theme";
 
 // markdown do chat: quebra de linha simples vira <br> (estilo chat)
 marked.setOptions({ breaks: true, gfm: true });
@@ -206,7 +214,7 @@ function activeConv(): Conversation {
 function newConversation(): Conversation {
   const c: Conversation = {
     id: crypto.randomUUID?.() ?? String(Date.now()),
-    title: "Novo chat",
+    title: t("conv.newChat"),
     messages: [],
   };
   state.conversations.unshift(c);
@@ -251,7 +259,7 @@ function renderConvBar() {
         onClick: () => switchConv(c.id),
       },
       [
-        h("span", { class: "conv-title" }, [c.title || "Novo chat"]),
+        h("span", { class: "conv-title" }, [c.title || t("conv.newChat")]),
         h(
           "button",
           {
@@ -274,11 +282,7 @@ function renderMessages() {
   box.innerHTML = "";
   const conv = activeConv();
   if (conv.messages.length === 0) {
-    box.append(
-      h("div", { class: "empty" }, [
-        "Carregue um modelo e comece a conversar. As metricas de tok/s aparecem no topo.",
-      ]),
-    );
+    box.append(h("div", { class: "empty" }, [t("chat.empty")]));
     return;
   }
   for (const m of conv.messages) {
@@ -315,17 +319,17 @@ function buildShell() {
           h("div", { class: "logo" }, ["⚡"]),
           h("div", {}, [
             h("div", { class: "brand-title" }, ["LocalAI Studio"]),
-            h("div", { class: "brand-sub" }, ["GGUF na CPU/iGPU"]),
+            h("div", { class: "brand-sub" }, [t("brand.sub")]),
           ]),
         ]),
-        h("div", { id: "hw-card", class: "card" }, ["Detectando hardware…"]),
+        h("div", { id: "hw-card", class: "card" }, [t("sidebar.hwDetecting")]),
         h("div", { class: "section-head" }, [
-          h("span", {}, ["Pastas de modelos"]),
-          h("button", { class: "mini", id: "add-dir" }, ["+ pasta"]),
+          h("span", {}, [t("sidebar.folders")]),
+          h("button", { class: "mini", id: "add-dir" }, [t("sidebar.addFolder")]),
         ]),
         h("div", { id: "dirs", class: "dirs" }, []),
         h("div", { class: "section-head" }, [
-          h("span", {}, ["Modelos GGUF"]),
+          h("span", {}, [t("sidebar.models")]),
           h("button", { class: "mini", id: "rescan" }, ["⟳"]),
         ]),
         h("div", { id: "models", class: "models" }, ["—"]),
@@ -333,24 +337,25 @@ function buildShell() {
       h("main", { class: "main" }, [
         h("header", { class: "topbar" }, [
           h("div", { id: "sel-model", class: "sel-model" }, [
-            "Nenhum modelo selecionado",
+            t("topbar.noModel"),
           ]),
           h("div", { class: "topbar-right" }, [
-            h("div", { id: "ctx", class: "ctx", title: "Tokens de contexto usados" }, []),
+            h("div", { id: "ctx", class: "ctx", title: t("ctx.title") }, []),
             h("div", { id: "hud", class: "hud" }, []),
-            h("div", { id: "status-pill", class: "pill off" }, ["parado"]),
+            h("div", { id: "status-pill", class: "pill off" }, [t("status.stopped")]),
             h("button", { id: "load-btn", class: "primary", disabled: true }, [
-              "Carregar",
+              t("btn.load"),
             ]),
+            buildConfigCluster(),
           ]),
         ]),
         h("nav", { class: "tabs" }, [
-          h("button", { class: "tab active", "data-view": "chat" }, ["Chat"]),
+          h("button", { class: "tab active", "data-view": "chat" }, [t("tab.chat")]),
           h("button", { class: "tab", "data-view": "tuner" }, [
-            "Ajustes & Auto-tuner",
+            t("tab.tuner"),
           ]),
-          h("button", { class: "tab", "data-view": "hub" }, ["Baixar modelos"]),
-          h("button", { class: "tab", "data-view": "logs" }, ["Logs"]),
+          h("button", { class: "tab", "data-view": "hub" }, [t("tab.hub")]),
+          h("button", { class: "tab", "data-view": "logs" }, [t("tab.logs")]),
         ]),
         h("section", { id: "view-chat", class: "view" }, []),
         h("section", { id: "view-tuner", class: "view hidden" }, []),
@@ -389,6 +394,49 @@ function switchView(view: string) {
   }
 }
 
+// ---------- Config: tema + idioma (topbar) ----------
+function themeTitle(pref: ThemePref): string {
+  return pref === "light"
+    ? t("theme.light")
+    : pref === "dark"
+      ? t("theme.dark")
+      : t("theme.system");
+}
+
+function buildConfigCluster(): HTMLElement {
+  const themeBtn = h(
+    "button",
+    {
+      class: "theme-btn",
+      title: themeTitle(getThemePref()),
+      onClick: () => {
+        const pref = cycleTheme(); // já persiste e aplica
+        themeBtn.textContent = themeIcon(pref);
+        themeBtn.title = themeTitle(pref);
+      },
+    },
+    [themeIcon(getThemePref())],
+  );
+
+  const langSel = h(
+    "select",
+    {
+      class: "lang-select",
+      title: t("lang.title"),
+      onChange: (e: Event) => setLocale((e.target as HTMLSelectElement).value as Locale),
+    },
+    (Object.keys(LOCALE_LABELS) as Locale[]).map((l) =>
+      h(
+        "option",
+        { value: l, ...(l === getLocale() ? { selected: true } : {}) },
+        [LOCALE_LABELS[l]],
+      ),
+    ),
+  );
+
+  return h("div", { class: "config-cluster" }, [themeBtn, langSel]);
+}
+
 // ---------- Hardware ----------
 async function loadHardware() {
   const hw = await invoke<HardwareInfo>("get_hardware");
@@ -407,18 +455,24 @@ async function loadHardware() {
   $("#hw-card").append(
     h("div", { class: "hw-cpu" }, [hw.cpu_brand]),
     h("div", { class: "hw-grid" }, [
-      kv("Nucleos", `${hw.physical_cores} fis / ${hw.logical_cores} log`),
+      kv(
+        t("hw.cores"),
+        t("hw.coresVal", { phys: hw.physical_cores, log: hw.logical_cores }),
+      ),
       kv("RAM", `${hw.total_ram_gb.toFixed(1)} GB`),
       kv("SIMD", simd || "—"),
-      kv("Backend", hw.features.best_cpu_isa.split(" (")[0]),
+      kv(t("hw.backend"), hw.features.best_cpu_isa.split(" (")[0]),
     ]),
     h("div", { class: "hw-threads" }, [
-      `Tuner: ${hw.recommended_gen_threads} threads p/ geracao, ${hw.recommended_batch_threads} p/ prompt`,
+      t("hw.threads", {
+        gen: hw.recommended_gen_threads,
+        batch: hw.recommended_batch_threads,
+      }),
     ]),
     h("div", { class: "hw-threads" }, [
       hw.gpu_name
-        ? `GPU (Vulkan): ${hw.gpu_name} — ~${hw.gpu_budget_gb.toFixed(1)} GB p/ offload`
-        : `GPU Vulkan não detectada — estimando ~${hw.gpu_budget_gb.toFixed(1)} GB p/ offload`,
+        ? t("hw.gpu", { name: hw.gpu_name, gb: hw.gpu_budget_gb.toFixed(1) })
+        : t("hw.gpuNone", { gb: hw.gpu_budget_gb.toFixed(1) }),
     ]),
   );
 }
@@ -447,7 +501,7 @@ function renderDirs() {
   const box = $("#dirs");
   box.innerHTML = "";
   if (!state.dirs.length) {
-    box.append(h("div", { class: "muted" }, ["Nenhuma pasta. Adicione uma."]));
+    box.append(h("div", { class: "muted" }, [t("sidebar.foldersEmpty")]));
     return;
   }
   for (const d of state.dirs) {
@@ -482,12 +536,13 @@ async function addDir() {
 }
 async function scan() {
   const box = $("#models");
-  box.innerHTML = "Procurando…";
+  box.innerHTML = "";
+  box.append(h("div", { class: "muted" }, [t("models.scanning")]));
   const models = await invoke<ModelInfo[]>("scan_models", { dirs: state.dirs });
   state.models = models;
   box.innerHTML = "";
   if (!models.length) {
-    box.append(h("div", { class: "muted" }, ["Nenhum .gguf encontrado."]));
+    box.append(h("div", { class: "muted" }, [t("models.none")]));
     return;
   }
   for (const m of models) {
@@ -503,7 +558,7 @@ async function scan() {
           tag(m.quant),
           tag(`${m.size_gb.toFixed(1)} GB`),
           tag(m.arch),
-          ...(m.has_mmproj ? [tag("👁 visao")] : []),
+          ...(m.has_mmproj ? [tag(t("model.vision"))] : []),
         ]),
       ],
     );
@@ -575,7 +630,7 @@ function renderTuner() {
   v.innerHTML = "";
   const rec = state.rec;
   if (!rec) {
-    v.append(h("div", { class: "muted pad" }, ["Selecione um modelo."]));
+    v.append(h("div", { class: "muted pad" }, [t("tuner.selectModel")]));
     return;
   }
   const c = rec.config;
@@ -588,9 +643,9 @@ function renderTuner() {
     h("div", { class: "tuner" }, [
       // Controles
       h("div", { class: "panel" }, [
-        h("h3", {}, ["Controles"]),
+        h("h3", {}, [t("tuner.controls")]),
         ctrlSelect(
-          "Contexto (tokens)",
+          t("tuner.ctxTokens"),
           [2048, 4096, 8192, 16384, 32768]
             .filter((x) => x <= Math.max(2048, maxCtx))
             .map((x) => [String(x), String(x)]),
@@ -601,7 +656,8 @@ function renderTuner() {
           },
         ),
         ctrlToggle(
-          `Offload total na GPU (${state.hw?.gpu_name ?? "Vulkan"})${rec.gpu_recommended ? " — recomendado" : ""}`,
+          t("tuner.gpuOffload", { gpu: state.hw?.gpu_name ?? "Vulkan" }) +
+            (rec.gpu_recommended ? t("tuner.recommended") : ""),
           c.n_gpu_layers > 0,
           (on) => {
             state.overrides.gpu_offload = on;
@@ -612,7 +668,10 @@ function renderTuner() {
         ...(c.n_gpu_layers > 0
           ? [
               ctrlRange(
-                `Camadas na GPU (${c.n_gpu_layers}/${rec.max_gpu_layers}) — parcial costuma piorar`,
+                t("tuner.gpuLayers", {
+                  n: c.n_gpu_layers,
+                  max: rec.max_gpu_layers,
+                }),
                 0,
                 rec.max_gpu_layers,
                 c.n_gpu_layers,
@@ -625,7 +684,7 @@ function renderTuner() {
             ]
           : []),
         ctrlToggle(
-          "KV cache quantizado (q8_0)",
+          t("tuner.kvQuant"),
           state.overrides.kv_quant,
           (on) => {
             state.overrides.kv_quant = on;
@@ -635,7 +694,7 @@ function renderTuner() {
         ...(m.has_mmproj
           ? [
               ctrlToggle(
-                "Visão / multimodal (mmproj) — mais lento",
+                t("tuner.vision"),
                 state.overrides.use_mmproj,
                 (on) => {
                   state.overrides.use_mmproj = on;
@@ -647,7 +706,7 @@ function renderTuner() {
         ...(state.draftCandidate
           ? [
               ctrlToggle(
-                `Decodificação especulativa (rascunho: ${state.draftCandidate.name})`,
+                t("tuner.speculative", { name: state.draftCandidate.name }),
                 c.draft_model != null,
                 (on) => {
                   state.overrides.use_speculative = on;
@@ -656,38 +715,38 @@ function renderTuner() {
               ),
             ]
           : []),
-        ctrlNumber("Porta", state.overrides.port, (val) => {
+        ctrlNumber(t("tuner.port"), state.overrides.port, (val) => {
           state.overrides.port = val;
           refreshRecommendation();
         }),
       ]),
       // Resumo + RAM
       h("div", { class: "panel" }, [
-        h("h3", {}, ["Configuracao resultante"]),
+        h("h3", {}, [t("tuner.resultConfig")]),
         h("div", { class: `ram ${ramClass}` }, [
           h("div", { class: "ram-num" }, [`${rec.est_ram_gb.toFixed(1)} GB`]),
           h("div", { class: "ram-lbl" }, [
-            rec.fits_in_ram ? "cabe na RAM" : "perto do limite de RAM",
-            ` (de ${state.hw?.total_ram_gb.toFixed(1)} GB)`,
+            rec.fits_in_ram ? t("tuner.fitsRam") : t("tuner.nearRamLimit"),
+            t("tuner.ramOf", { total: state.hw?.total_ram_gb.toFixed(1) ?? "?" }),
           ]),
         ]),
         h("div", { class: "flags" }, [
-          fl("threads (geracao)", String(c.threads)),
-          fl("threads (prompt)", String(c.threads_batch)),
-          fl("contexto", String(c.ctx_size)),
+          fl(t("flag.threadsGen"), String(c.threads)),
+          fl(t("flag.threadsPrompt"), String(c.threads_batch)),
+          fl(t("flag.ctx"), String(c.ctx_size)),
           fl("n-gpu-layers", String(c.n_gpu_layers)),
           fl("flash-attn", c.flash_attn),
           fl("KV cache", `${c.cache_type_k}`),
-          fl("mlock", c.mlock ? "sim" : "nao"),
+          fl("mlock", c.mlock ? t("common.yes") : t("common.no")),
           fl("batch/ubatch", `${c.batch}/${c.ubatch}`),
-          fl("speculative", c.draft_model ? "ligado" : "off"),
+          fl("speculative", c.draft_model ? t("common.on") : t("common.off")),
         ]),
-        h("div", { class: "cmd-label" }, ["Linha de comando:"]),
+        h("div", { class: "cmd-label" }, [t("tuner.cmdLine")]),
         h("pre", { class: "cmd" }, [argsPreview(c)]),
       ]),
       // Racional
       h("div", { class: "panel wide" }, [
-        h("h3", {}, ["Por que essas escolhas (para o seu hardware)"]),
+        h("h3", {}, [t("tuner.why")]),
         h(
           "ul",
           { class: "why" },
@@ -695,7 +754,7 @@ function renderTuner() {
         ),
         ...(rec.warnings.length
           ? [
-              h("h3", { class: "warnh" }, ["Avisos"]),
+              h("h3", { class: "warnh" }, [t("tuner.warnings")]),
               h(
                 "ul",
                 { class: "warnlist" },
@@ -812,33 +871,33 @@ async function loadServer() {
   if (!state.rec) return;
   state.busy = true;
   state.ready = false;
-  setPill("subindo", "loading");
-  $("#load-btn").textContent = "Subindo…";
+  setPill(t("status.starting"), "loading");
+  $("#load-btn").textContent = t("btn.starting");
   $("#load-btn").setAttribute("disabled", "true");
-  addLog(`\n=== Carregando ${state.rec.config.model_name} ===`);
+  addLog(t("log.loading", { model: state.rec.config.model_name }));
   try {
     const info = await invoke<RunningInfo>("start_server", {
       config: state.rec.config,
     });
     // o backend pode ter trocado a porta se a preferida estava ocupada
     if (info.port !== state.rec.config.port) {
-      addLog(`[localai] porta ajustada para ${info.port}`);
+      addLog(t("log.portAdjusted", { port: info.port }));
       state.rec.config.port = info.port;
     }
     switchView("logs");
     await waitForHealthy(state.rec.config.port);
     state.ready = true;
-    setPill("pronto", "on");
-    $("#load-btn").textContent = "Parar";
+    setPill(t("status.ready"), "on");
+    $("#load-btn").textContent = t("btn.stop");
     switchView("chat");
   } catch (e) {
-    addLog(`ERRO: ${e}`);
+    addLog(t("log.errorPrefix", { e: String(e) }));
     // encerra o processo travado para liberar a porta/RAM
     try {
       await invoke("stop_server");
     } catch {}
-    setPill("erro", "off");
-    $("#load-btn").textContent = "Carregar";
+    setPill(t("status.error"), "off");
+    $("#load-btn").textContent = t("btn.load");
   } finally {
     state.busy = false;
     $("#load-btn").removeAttribute("disabled");
@@ -850,8 +909,8 @@ async function stopServer() {
   $("#load-btn").setAttribute("disabled", "true");
   await invoke("stop_server");
   state.ready = false;
-  setPill("parado", "off");
-  $("#load-btn").textContent = "Carregar";
+  setPill(t("status.stopped"), "off");
+  $("#load-btn").textContent = t("btn.load");
   state.busy = false;
   $("#load-btn").removeAttribute("disabled");
 }
@@ -860,11 +919,11 @@ async function waitForHealthy(port: number, timeoutMs = 240000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const s = await invoke<StatusReport>("server_status");
-    if (!s.running) throw new Error("processo encerrou durante o carregamento");
+    if (!s.running) throw new Error(t("err.processEnded"));
     if (s.healthy) return;
     await new Promise((r) => setTimeout(r, 600));
   }
-  throw new Error("timeout esperando o servidor ficar saudavel");
+  throw new Error(t("err.healthyTimeout"));
 }
 
 function setPill(text: string, cls: string) {
@@ -887,18 +946,16 @@ function buildChatView() {
   v.append(
     h("div", { class: "chat-wrap" }, [
       h("div", { class: "conv-bar" }, [
-        h("button", { id: "new-chat", class: "mini" }, ["＋ Novo chat"]),
+        h("button", { id: "new-chat", class: "mini" }, [t("chat.newChat")]),
         h("div", { id: "conv-list", class: "conv-list" }, []),
       ]),
       h("div", { id: "messages", class: "messages" }, [
-        h("div", { class: "empty" }, [
-          "Carregue um modelo e comece a conversar. As metricas de tok/s aparecem no topo.",
-        ]),
+        h("div", { class: "empty" }, [t("chat.empty")]),
       ]),
       h("details", { class: "sampling" }, [
-        h("summary", {}, ["Amostragem & system prompt"]),
+        h("summary", {}, [t("chat.sampling")]),
         h("div", { class: "samp-grid" }, [
-          sampField("Temperatura", "temperature", 0, 2, 0.05),
+          sampField(t("samp.temperature"), "temperature", 0, 2, 0.05),
           sampField("top_p", "top_p", 0, 1, 0.01),
           sampField("top_k", "top_k", 0, 200, 1),
           sampField("min_p", "min_p", 0, 1, 0.01),
@@ -909,16 +966,14 @@ function buildChatView() {
           id: "sysprompt",
           class: "sysprompt",
           rows: "2",
-          placeholder: "System prompt (opcional) — vazio por padrão",
+          placeholder: t("chat.sysPlaceholder"),
           onInput: (e: Event) => {
             state.systemPrompt = (e.target as HTMLTextAreaElement).value;
             localStorage.setItem(SYS_KEY, state.systemPrompt);
           },
         }, [state.systemPrompt]),
         h("label", { class: "ctrl toggle", style: "margin-top:8px" }, [
-          h("span", {}, [
-            "Modo raciocínio (pensar) — desligado por padrão (aplica na hora, sem reiniciar)",
-          ]),
+          h("span", {}, [t("chat.thinkMode")]),
           h("input", {
             type: "checkbox",
             checked: state.think, // false por padrao (opt-in)
@@ -938,17 +993,16 @@ function buildChatView() {
           {
             id: "attach",
             class: "mini attach",
-            title:
-              "Anexar imagem (requer modelo com visão carregado com mmproj ligado no tuner)",
+            title: t("chat.attachTitle"),
           },
           ["📎"],
         ),
         h("textarea", {
           id: "input",
-          placeholder: "Escreva sua mensagem…  (Enter envia, Shift+Enter quebra linha)",
+          placeholder: t("chat.inputPlaceholder"),
           rows: "1",
         }, []),
-        h("button", { id: "send", class: "primary" }, ["Enviar"]),
+        h("button", { id: "send", class: "primary" }, [t("btn.send")]),
       ]),
     ]),
   );
@@ -1006,11 +1060,7 @@ function renderImgPreview() {
   box.append(
     h("img", { src: state.pendingImage }),
     ...(!state.rec?.config.mmproj
-      ? [
-          h("span", { class: "warn-txt" }, [
-            "⚠ o modelo atual está sem visão — recarregue com “Visão / multimodal (mmproj)” ligado no tuner",
-          ]),
-        ]
+      ? [h("span", { class: "warn-txt" }, [t("chat.noVisionWarn")])]
       : []),
     h(
       "button",
@@ -1072,7 +1122,9 @@ function addMessage(
     content,
   ];
   const msg = h("div", { class: `msg ${role}` }, [
-    h("div", { class: "role" }, [role === "user" ? "Voce" : "Assistente"]),
+    h("div", { class: "role" }, [
+      role === "user" ? t("role.you") : t("role.assistant"),
+    ]),
     h("div", { class: "bubble" }, bubbleKids),
   ]);
   box.append(msg);
@@ -1083,7 +1135,7 @@ function addMessage(
 async function send() {
   if (state.busy) return;
   if (!state.ready) {
-    setPill("carregue um modelo", "off");
+    setPill(t("status.loadModel"), "off");
     return;
   }
   const input = $<HTMLTextAreaElement>("#input");
@@ -1101,13 +1153,13 @@ async function send() {
   const content: string | ContentPart[] = img
     ? [
         { type: "image_url", image_url: { url: img } },
-        { type: "text", text: text || "Descreva a imagem." },
+        { type: "text", text: text || t("chat.describeImage") },
       ]
     : text;
   addMessage("user", contentText(content), img ? [img] : []);
   conv.messages.push({ role: "user", content });
   if (conv.messages.length === 1) {
-    conv.title = (text || "Imagem").slice(0, 40); // titulo = inicio da 1a msg
+    conv.title = (text || t("chat.image")).slice(0, 40); // titulo = inicio da 1a msg
     renderConvBar();
   }
 
@@ -1126,7 +1178,7 @@ async function send() {
   const port = state.rec!.config.port;
   state.abort = new AbortController();
   state.busy = true;
-  $("#send").textContent = "Parar";
+  $("#send").textContent = t("btn.stop");
   const t0 = performance.now();
   let acc = "";
   let thinkText = "";
@@ -1160,15 +1212,14 @@ async function send() {
     // abort do usuario (botao Parar) nao e erro: so finaliza com o parcial
     const aborted = (e as { name?: string })?.name === "AbortError";
     if (!aborted) {
-      acc += `\n\n[erro: ${e}]`;
+      acc += t("chat.errorInline", { e: String(e) });
       renderMarkdown(a.answer, acc);
     }
   } finally {
     a.answer.classList.remove("streaming");
     // modelo de reasoning que so "pensou" e nao deu resposta limpa
     if (!acc.trim() && thinkText.trim()) {
-      a.answer.textContent =
-        "(o modelo respondeu apenas no canal de pensamento — abra 'Pensando' acima)";
+      a.answer.textContent = t("chat.thoughtOnly");
       a.answer.classList.add("muted");
     }
     conv.messages.push({
@@ -1180,7 +1231,7 @@ async function send() {
     saveConvs();
     state.busy = false;
     state.abort = null;
-    $("#send").textContent = "Enviar";
+    $("#send").textContent = t("btn.send");
     const secs = (performance.now() - t0) / 1000;
     if (!$("#hud").textContent) {
       $("#hud").textContent = `${secs.toFixed(1)}s`;
@@ -1197,7 +1248,7 @@ function addAssistantMessage() {
   const thinkingWrap = h(
     "details",
     { class: "thinking" },
-    [h("summary", {}, ["💭 Pensando…"]), thinking],
+    [h("summary", {}, [t("chat.thinking")]), thinking],
   );
   (thinkingWrap as HTMLElement).style.display = "none";
   const answer = h("div", { class: "bubble" }, []);
@@ -1205,20 +1256,20 @@ function addAssistantMessage() {
     "button",
     {
       class: "copy",
-      title: "Copiar resposta",
+      title: t("chat.copyTitle"),
       onClick: async () => {
         const src = answer.dataset.src ?? answer.textContent ?? "";
         try {
           await navigator.clipboard.writeText(src);
-          copyBtn.textContent = "✓ copiado";
-          setTimeout(() => (copyBtn.textContent = "copiar"), 1200);
+          copyBtn.textContent = t("chat.copied");
+          setTimeout(() => (copyBtn.textContent = t("chat.copy")), 1200);
         } catch {}
       },
     },
-    ["copiar"],
+    [t("chat.copy")],
   );
   const msg = h("div", { class: "msg assistant" }, [
-    h("div", { class: "role" }, ["Assistente ", copyBtn]),
+    h("div", { class: "role" }, [t("role.assistant") + " ", copyBtn]),
     thinkingWrap,
     answer,
   ]);
@@ -1251,9 +1302,7 @@ function showCtx(u: Usage) {
   el.textContent = `ctx ${used}/${max}`;
   const full = used > max * 0.8;
   el.classList.toggle("warn", full);
-  el.title = full
-    ? "Contexto quase cheio: o servidor vai truncar as mensagens antigas. Aumente o contexto no tuner ou comece um chat novo."
-    : "Tokens de contexto usados (prompt + resposta)";
+  el.title = full ? t("ctx.fullWarn") : t("ctx.titleFull");
 }
 
 // ---------- Baixar modelos (Hugging Face Hub) ----------
@@ -1265,16 +1314,13 @@ function buildHubView() {
       h("div", { class: "hub-search" }, [
         h("input", {
           id: "hub-q",
-          placeholder:
-            "Buscar modelos GGUF no Hugging Face…  (ex.: qwen3.5 4b, gemma 3n)",
+          placeholder: t("hub.searchPlaceholder"),
         }),
-        h("button", { id: "hub-go", class: "primary" }, ["Buscar"]),
+        h("button", { id: "hub-go", class: "primary" }, [t("hub.search")]),
       ]),
       h("div", { id: "hub-status", class: "hub-status hidden" }, []),
       h("div", { id: "hub-results", class: "hub-results" }, [
-        h("div", { class: "muted pad" }, [
-          "Busque um modelo para começar. Dica: repositórios \"GGUF\" prontos costumam vir de bartowski, unsloth e lmstudio-community. Os downloads vão para a pasta LocalAI/models do seu usuário e aparecem na lista da esquerda.",
-        ]),
+        h("div", { class: "muted pad" }, [t("hub.hint")]),
       ]),
     ]),
   );
@@ -1288,12 +1334,13 @@ async function hubSearch() {
   const q = $<HTMLInputElement>("#hub-q").value.trim();
   if (!q) return;
   const box = $("#hub-results");
-  box.innerHTML = "Buscando…";
+  box.innerHTML = "";
+  box.append(h("div", { class: "muted pad" }, [t("hub.searching")]));
   try {
     const models = await invoke<HubModel[]>("hf_search", { query: q });
     box.innerHTML = "";
     if (!models.length) {
-      box.append(h("div", { class: "muted pad" }, ["Nada encontrado."]));
+      box.append(h("div", { class: "muted pad" }, [t("hub.nothing")]));
       return;
     }
     for (const m of models) box.append(hubCard(m));
@@ -1314,14 +1361,15 @@ function hubCard(m: HubModel): HTMLElement {
         onClick: async () => {
           files.classList.toggle("hidden");
           if (loaded || files.classList.contains("hidden")) return;
-          files.innerHTML = "Carregando arquivos…";
+          files.innerHTML = "";
+          files.append(h("div", { class: "muted" }, [t("hub.loadingFiles")]));
           try {
             const fs = await invoke<HubFile[]>("hf_list_files", { repo: m.id });
             loaded = true;
             files.innerHTML = "";
             if (!fs.length) {
               files.append(
-                h("div", { class: "muted" }, ["Sem arquivos .gguf neste repositório."]),
+                h("div", { class: "muted" }, [t("hub.noFiles")]),
               );
             }
             for (const f of fs) files.append(hubFileRow(m.id, f));
@@ -1360,7 +1408,7 @@ function hubFileRow(repo: string, f: HubFile): HTMLElement {
         class: "mini",
         onClick: async () => {
           if (state.hubActive) {
-            addLog("[hub] ja existe um download em andamento");
+            addLog(t("hub.alreadyDownloading"));
             return;
           }
           try {
@@ -1373,7 +1421,7 @@ function hubFileRow(repo: string, f: HubFile): HTMLElement {
           }
         },
       },
-      ["Baixar"],
+      [t("hub.download")],
     ),
   ]);
 }
@@ -1389,12 +1437,14 @@ function showHubStatus(file: string, downloaded: number, total: number | null) {
   s.innerHTML = "";
   s.append(
     h("div", { class: "hub-status-row" }, [
-      h("span", { class: "hub-fname", title: file }, [`Baixando ${file}`]),
+      h("span", { class: "hub-fname", title: file }, [
+        t("hub.downloading", { file }),
+      ]),
       h("span", {}, [label]),
       h(
         "button",
         { class: "mini", onClick: () => invoke("hf_cancel_download") },
-        ["Cancelar"],
+        [t("hub.cancel")],
       ),
     ]),
     h("div", { class: "bar" }, [
@@ -1405,6 +1455,8 @@ function showHubStatus(file: string, downloaded: number, total: number | null) {
 
 // ---------- Init ----------
 async function init() {
+  initTheme();
+  document.documentElement.lang = localeTag();
   buildShell();
   const savedSamp = JSON.parse(localStorage.getItem(SAMPLING_KEY) || "null");
   if (savedSamp) state.sampling = { ...state.sampling, ...savedSamp };
@@ -1429,9 +1481,7 @@ async function init() {
   renderMessages();
 
   await listen<string>("server-log", (e) => addLog(e.payload));
-  await listen<boolean>("server-ready", () =>
-    addLog("[localai] servidor sinalizou pronto"),
-  );
+  await listen<boolean>("server-ready", () => addLog(t("log.serverReady")));
   await listen<{ file: string; downloaded: number; total: number | null }>(
     "hub-progress",
     (e) => showHubStatus(e.payload.file, e.payload.downloaded, e.payload.total),
@@ -1449,11 +1499,11 @@ async function init() {
           s.append(h("div", { class: "warn-txt" }, [e.payload.error]));
         }
       } else {
-        addLog(`[hub] download concluído: ${e.payload.path}`);
+        addLog(t("hub.doneLog", { path: String(e.payload.path) }));
         if (s) {
           s.classList.remove("hidden");
           s.innerHTML = "";
-          s.append(h("div", {}, [`✓ Baixado: ${e.payload.path}`]));
+          s.append(h("div", {}, [t("hub.done", { path: String(e.payload.path) })]));
         }
         // garante que a pasta de downloads esta monitorada e re-escaneia
         invoke<string>("default_download_dir").then((d) => {

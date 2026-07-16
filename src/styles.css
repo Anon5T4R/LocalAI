@@ -9,7 +9,29 @@
   --accent2: #36b37e;
   --warn: #e3a008;
   --danger: #f0506e;
+  --bg-deep: #0b0e13;
   --radius: 10px;
+}
+
+/* Tema claro: sobrescreve as vars semânticas com uma paleta legível (AA). */
+:root[data-theme="light"] {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --panel2: #eef1f5;
+  --border: #d6dde5;
+  --text: #1a2029;
+  --muted: #5b6673;
+  --accent: #a15c00; /* âmbar escurecido p/ contraste de texto no claro (link/cmd) */
+  --accent2: #157a50;
+  --warn: #b45309;
+  --danger: #d63b5c;
+  --bg-deep: #e9edf2;
+}
+/* No claro o âmbar/verde ficam mais escuros, então a tinta escura padrão
+   (que funciona sobre o âmbar/verde vivos do dark) vira ilegível. Usa branco. */
+:root[data-theme="light"] .primary,
+:root[data-theme="light"] .pill.on {
+  color: #ffffff;
 }
 
 * {
@@ -202,7 +224,7 @@ button {
   margin-top: 5px;
 }
 .tag {
-  background: #0b0e13;
+  background: var(--bg-deep);
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 1px 6px;
@@ -275,6 +297,38 @@ button {
 .primary:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* ---------- Cluster de config (tema + idioma) na topbar ---------- */
+.config-cluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.theme-btn {
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 15px;
+  line-height: 1;
+}
+.theme-btn:hover {
+  border-color: var(--accent);
+}
+.lang-select {
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 12px;
+}
+.lang-select:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .tabs {
@@ -395,7 +449,7 @@ button {
   margin-bottom: 4px;
 }
 .cmd {
-  background: #0b0e13;
+  background: var(--bg-deep);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px;
@@ -517,7 +571,7 @@ button {
 }
 .msg.user .bubble {
   background: var(--panel2);
-  border-color: #344;
+  border-color: var(--border);
 }
 .bubble.streaming::after {
   content: "▋";
@@ -542,7 +596,7 @@ button {
 .thinking-body {
   margin: 6px 0 0;
   padding: 8px 10px;
-  background: #0b0e13;
+  background: var(--bg-deep);
   border: 1px dashed var(--border);
   border-radius: 8px;
   color: var(--muted);
@@ -632,7 +686,7 @@ button {
   margin-bottom: 0;
 }
 .bubble.md pre {
-  background: #0b0e13;
+  background: var(--bg-deep);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
@@ -642,7 +696,7 @@ button {
 .bubble.md code {
   font-family: "Cascadia Code", "Consolas", monospace;
   font-size: 12.5px;
-  background: #0b0e13;
+  background: var(--bg-deep);
   border-radius: 4px;
   padding: 1px 5px;
 }
@@ -777,7 +831,7 @@ button {
 }
 .bar {
   height: 6px;
-  background: #0b0e13;
+  background: var(--bg-deep);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -848,7 +902,7 @@ button {
   padding: 14px 16px;
   font-family: "Cascadia Code", "Consolas", monospace;
   font-size: 11.5px;
-  color: #9fb3c8;
+  color: var(--muted);
   white-space: pre-wrap;
   word-break: break-word;
 }

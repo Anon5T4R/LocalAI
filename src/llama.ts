@@ -1,5 +1,6 @@
 // Cliente de chat para o llama-server (API compativel com OpenAI),
 // com streaming SSE e captura das metricas (tok/s) do llama.cpp.
+import { t } from "./lib/i18n";
 
 /** Parte de conteudo multimodal (texto ou imagem em data-URL base64). */
 export type ContentPart =
@@ -207,7 +208,7 @@ export async function* streamChat(
 
   if (!resp.ok || !resp.body) {
     const txt = await resp.text().catch(() => "");
-    throw new Error(`Servidor respondeu ${resp.status}: ${txt}`);
+    throw new Error(t("err.serverResponded", { status: resp.status, text: txt }));
   }
 
   const reader = resp.body.getReader();
