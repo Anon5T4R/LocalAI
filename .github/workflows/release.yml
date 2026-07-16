@@ -45,7 +45,7 @@ jobs:
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Dependencias do sistema (Linux/Tauri)
         if: runner.os == 'Linux'
@@ -61,7 +61,7 @@ jobs:
         with:
           workspaces: ./src-tauri -> target
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
 
