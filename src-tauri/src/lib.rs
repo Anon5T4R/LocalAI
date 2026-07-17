@@ -10,14 +10,17 @@ use server::{RunningInfo, ServerState, StatusReport};
 use tauri::{AppHandle, Manager, RunEvent};
 use tuner::{LlamaConfig, Recommendation, TuneOverrides};
 
+// async: a detecção de GPU roda `llama-server --list-devices` (subprocesso) na 1ª
+// chamada; síncrono isso bloqueava a main thread e congelava a janela ao abrir.
 #[tauri::command]
-fn get_hardware(app: AppHandle) -> HardwareInfo {
+async fn get_hardware(app: AppHandle) -> HardwareInfo {
     let gpu = server::vulkan_gpu(&app);
     hardware::get_hardware(gpu)
 }
 
+// async: varre diretórios e lê headers GGUF — fora da main thread.
 #[tauri::command]
-fn scan_models(dirs: Vec<String>) -> Vec<ModelInfo> {
+async fn scan_models(dirs: Vec<String>) -> Vec<ModelInfo> {
     gguf::scan_dirs(&dirs)
 }
 
@@ -109,8 +112,9 @@ fn pick_folder() -> Option<String> {
 }
 
 /// Diretorios candidatos onde costumam existir modelos GGUF.
+/// async: proba unidades A-Z com .exists() — drive de rede desconectado pode travar segundos.
 #[tauri::command]
-fn default_model_dirs() -> Vec<String> {
+async fn default_model_dirs() -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut push_if_exists = |p: std::path::PathBuf| {
         if p.exists() {
