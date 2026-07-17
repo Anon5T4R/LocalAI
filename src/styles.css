@@ -1,31 +1,38 @@
+/* §2: o quase-preto #0e1116 (L*5.0) sobe +5 L* mantendo o matiz azulado, e
+   panel/panel2/border/bg-deep sobem junto — a escada continua intacta. Com o
+   fundão menos intenso o âmbar #ffb000 vira o pico de contraste da tela.
+   (O --panel2 daqui é o --panel-2 da spec: o nome sem hífen foi o motivo de o
+   script da pass não ter encostado nele.) */
 :root {
-  --bg: #0e1116;
-  --panel: #161b22;
-  --panel2: #1c2330;
-  --border: #2a3340;
+  --bg: #191c20;
+  --panel: #20252c;
+  --panel2: #272e3b;
+  --border: #353e4c;
   --text: #e6edf3;
   --muted: #8b98a8;
   --accent: #ffb000;
   --accent2: #36b37e;
   --warn: #e3a008;
   --danger: #f0506e;
-  --bg-deep: #0b0e13;
+  --bg-deep: #17191d;
   --radius: 10px;
 }
 
 /* Tema claro: sobrescreve as vars semânticas com uma paleta legível (AA). */
+/* §2: o --panel deixa de ser #ffffff puro (off-white tingido com o matiz do
+   --bg); --bg desce ~3 L* e panel2/border/bg-deep acompanham. */
 :root[data-theme="light"] {
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --panel2: #eef1f5;
-  --border: #d6dde5;
+  --bg: #edeef0;
+  --panel: #f8f9fb;
+  --panel2: #e5e8ec;
+  --border: #ced5dd;
   --text: #1a2029;
   --muted: #5b6673;
   --accent: #a15c00; /* âmbar escurecido p/ contraste de texto no claro (link/cmd) */
   --accent2: #157a50;
   --warn: #b45309;
   --danger: #d63b5c;
-  --bg-deep: #e9edf2;
+  --bg-deep: #e0e4e9;
 }
 /* No claro o âmbar/verde ficam mais escuros, então a tinta escura padrão
    (que funciona sobre o âmbar/verde vivos do dark) vira ilegível. Usa branco. */
@@ -36,69 +43,69 @@
 
 /* ---------- Temas nomeados (paletas fixas, sobrepõem o accent do app) ---------- */
 :root[data-theme="nature"] {
-  --bg: #f5f7f2;
-  --panel: #ffffff;
-  --panel2: #eef2ea;
-  --border: #e2e8dd;
+  --bg: #eef1e9;
+  --panel: #f8faf5;
+  --panel2: #e4eade;
+  --border: #dbe3d4;
   --text: #2e3a2e;
-  --muted: #6f7d6f;
+  --muted: #697669;
   --accent: #7a9e7e;
   --accent2: #e8b4c8;
   --warn: #c98a2e;
   --danger: #c0492f;
-  --bg-deep: #eef1ea;
+  --bg-deep: #e8ebe4;
 }
 :root[data-theme="darkblue"] {
-  --bg: #0d1520;
-  --panel: #131f30;
-  --panel2: #1a2942;
-  --border: #223049;
+  --bg: #16202e;
+  --panel: #1d2a3c;
+  --panel2: #26374e;
+  --border: #2d3f59;
   --text: #e2e8f0;
   --muted: #8595ad;
   --accent: #3b82f6;
   --accent2: #60a5fa;
   --warn: #d9a441;
   --danger: #f87171;
-  --bg-deep: #0a1019;
+  --bg-deep: #171c24;
 }
 :root[data-theme="calmgreen"] {
-  --bg: #f2f5f1;
-  --panel: #ffffff;
-  --panel2: #e9efe7;
-  --border: #dde6dc;
+  --bg: #eaf0e9;
+  --panel: #f7faf6;
+  --panel2: #dfe8dd;
+  --border: #d5e0d3;
   --text: #24302a;
-  --muted: #6a7a6f;
+  --muted: #67776c;
   --accent: #4f7d5e;
   --accent2: #6fa07e;
   --warn: #c98a2e;
   --danger: #c0492f;
-  --bg-deep: #eaf0e8;
+  --bg-deep: #e4eae2;
 }
 :root[data-theme="pastelpink"] {
-  --bg: #fdf4f7;
-  --panel: #ffffff;
-  --panel2: #f9eaf0;
-  --border: #f2dfe7;
+  --bg: #f8ebf0;
+  --panel: #fdf6f9;
+  --panel2: #f2dde6;
+  --border: #ecd3de;
   --text: #3a2a30;
-  --muted: #8a7580;
+  --muted: #806d77;
   --accent: #e8799f;
   --accent2: #f4a9c4;
   --warn: #d99a3e;
   --danger: #d84a6b;
-  --bg-deep: #f7ebf1;
+  --bg-deep: #efe3e9;
 }
 :root[data-theme="punkprincess"] {
-  --bg: #120a1a;
-  --panel: #1a0f26;
-  --panel2: #241533;
-  --border: #2c1c3d;
+  --bg: #1c1228;
+  --panel: #251733;
+  --panel2: #32204a;
+  --border: #3a2850;
   --text: #f0e6ff;
   --muted: #9a86b5;
   --accent: #ff2d95;
   --accent2: #2de2ff;
   --warn: #ffb454;
   --danger: #ff5470;
-  --bg-deep: #0c0512;
+  --bg-deep: #16111a;
 }
 /* Mesmo motivo do bloco do claro: nesses temas o accent é escuro/saturado o
    bastante pra tinta escura padrão do .primary ficar ilegível. */
