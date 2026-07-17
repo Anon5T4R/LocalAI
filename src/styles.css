@@ -34,6 +34,79 @@
   color: #ffffff;
 }
 
+/* ---------- Temas nomeados (paletas fixas, sobrepõem o accent do app) ---------- */
+:root[data-theme="nature"] {
+  --bg: #f5f7f2;
+  --panel: #ffffff;
+  --panel2: #eef2ea;
+  --border: #e2e8dd;
+  --text: #2e3a2e;
+  --muted: #6f7d6f;
+  --accent: #7a9e7e;
+  --accent2: #e8b4c8;
+  --warn: #c98a2e;
+  --danger: #c0492f;
+  --bg-deep: #eef1ea;
+}
+:root[data-theme="darkblue"] {
+  --bg: #0d1520;
+  --panel: #131f30;
+  --panel2: #1a2942;
+  --border: #223049;
+  --text: #e2e8f0;
+  --muted: #8595ad;
+  --accent: #3b82f6;
+  --accent2: #60a5fa;
+  --warn: #d9a441;
+  --danger: #f87171;
+  --bg-deep: #0a1019;
+}
+:root[data-theme="calmgreen"] {
+  --bg: #f2f5f1;
+  --panel: #ffffff;
+  --panel2: #e9efe7;
+  --border: #dde6dc;
+  --text: #24302a;
+  --muted: #6a7a6f;
+  --accent: #4f7d5e;
+  --accent2: #6fa07e;
+  --warn: #c98a2e;
+  --danger: #c0492f;
+  --bg-deep: #eaf0e8;
+}
+:root[data-theme="pastelpink"] {
+  --bg: #fdf4f7;
+  --panel: #ffffff;
+  --panel2: #f9eaf0;
+  --border: #f2dfe7;
+  --text: #3a2a30;
+  --muted: #8a7580;
+  --accent: #e8799f;
+  --accent2: #f4a9c4;
+  --warn: #d99a3e;
+  --danger: #d84a6b;
+  --bg-deep: #f7ebf1;
+}
+:root[data-theme="punkprincess"] {
+  --bg: #120a1a;
+  --panel: #1a0f26;
+  --panel2: #241533;
+  --border: #2c1c3d;
+  --text: #f0e6ff;
+  --muted: #9a86b5;
+  --accent: #ff2d95;
+  --accent2: #2de2ff;
+  --warn: #ffb454;
+  --danger: #ff5470;
+  --bg-deep: #0c0512;
+}
+/* Mesmo motivo do bloco do claro: nesses temas o accent é escuro/saturado o
+   bastante pra tinta escura padrão do .primary ficar ilegível. */
+:root[data-theme="darkblue"] .primary,
+:root[data-theme="calmgreen"] .primary {
+  color: #ffffff;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -305,18 +378,7 @@ button {
   align-items: center;
   gap: 8px;
 }
-.theme-btn {
-  background: var(--panel2);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 5px 9px;
-  font-size: 15px;
-  line-height: 1;
-}
-.theme-btn:hover {
-  border-color: var(--accent);
-}
+/* .lang-select veste tanto o seletor de idioma quanto o de tema. */
 .lang-select {
   background: var(--panel2);
   color: var(--text);

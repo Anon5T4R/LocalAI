@@ -151,9 +151,15 @@ const pt = {
   "hub.done": "✓ Baixado: {path}",
 
   // ----- Tema / idioma -----
-  "theme.light": "Tema: claro",
-  "theme.dark": "Tema: escuro",
-  "theme.system": "Tema: sistema",
+  "theme.title": "Tema",
+  "theme.light": "Claro",
+  "theme.dark": "Escuro",
+  "theme.system": "Sistema",
+  "theme.nature": "Natureza",
+  "theme.darkblue": "Azul escuro",
+  "theme.calmgreen": "Verde calmo",
+  "theme.pastelpink": "Rosa pastel",
+  "theme.punkprincess": "PunkPrincess",
   "lang.title": "Idioma",
 } as const;
 
@@ -278,9 +284,15 @@ const en: Record<MessageKey, string> = {
   "hub.doneLog": "[hub] download finished: {path}",
   "hub.done": "✓ Downloaded: {path}",
 
-  "theme.light": "Theme: light",
-  "theme.dark": "Theme: dark",
-  "theme.system": "Theme: system",
+  "theme.title": "Theme",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
+  "theme.system": "System",
+  "theme.nature": "Nature",
+  "theme.darkblue": "Dark blue",
+  "theme.calmgreen": "Calm green",
+  "theme.pastelpink": "Pastel pink",
+  "theme.punkprincess": "PunkPrincess",
   "lang.title": "Language",
 };
 
@@ -403,9 +415,15 @@ const es: Record<MessageKey, string> = {
   "hub.doneLog": "[hub] descarga finalizada: {path}",
   "hub.done": "✓ Descargado: {path}",
 
-  "theme.light": "Tema: claro",
-  "theme.dark": "Tema: oscuro",
-  "theme.system": "Tema: sistema",
+  "theme.title": "Tema",
+  "theme.light": "Claro",
+  "theme.dark": "Oscuro",
+  "theme.system": "Sistema",
+  "theme.nature": "Naturaleza",
+  "theme.darkblue": "Azul oscuro",
+  "theme.calmgreen": "Verde tranquilo",
+  "theme.pastelpink": "Rosa pastel",
+  "theme.punkprincess": "PunkPrincess",
   "lang.title": "Idioma",
 };
 

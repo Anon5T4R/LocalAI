@@ -1,8 +1,30 @@
-// Tema claro/escuro/sistema do LocalAI Studio (vanilla, sem React).
+// Tema do LocalAI Studio (vanilla, sem React).
 // O dark é o default histórico (o `:root` do styles.css). O light entra via
-// `:root[data-theme="light"]`. "system" segue o prefers-color-scheme.
+// `:root[data-theme="light"]`. "system" segue o prefers-color-scheme. Os temas
+// NOMEADOS são paletas fixas (`:root[data-theme="<nome>"]`) que sobrepõem
+// inclusive o accent — vão direto pro data-theme, sem resolução.
 
-export type ThemePref = "system" | "light" | "dark";
+export type ThemePref =
+  | "system"
+  | "light"
+  | "dark"
+  | "nature"
+  | "darkblue"
+  | "calmgreen"
+  | "pastelpink"
+  | "punkprincess";
+
+/** Ordem canônica (usada pelo seletor das configurações). */
+export const THEME_PREFS: ThemePref[] = [
+  "system",
+  "light",
+  "dark",
+  "nature",
+  "darkblue",
+  "calmgreen",
+  "pastelpink",
+  "punkprincess",
+];
 
 const THEME_KEY = "localai.theme";
 
@@ -11,7 +33,7 @@ export function getThemePref(): ThemePref {
     typeof localStorage !== "undefined"
       ? localStorage.getItem(THEME_KEY)
       : null;
-  return v === "light" || v === "dark" || v === "system" ? v : "system";
+  return THEME_PREFS.includes(v as ThemePref) ? (v as ThemePref) : "system";
 }
 
 function systemIsDark(): boolean {
@@ -23,8 +45,11 @@ function systemIsDark(): boolean {
 
 /** Resolve a preferência para o tema efetivo e aplica no <html>. */
 export function applyTheme(pref: ThemePref = getThemePref()) {
-  const dark = pref === "dark" || (pref === "system" && systemIsDark());
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  if (pref === "system") {
+    document.documentElement.dataset.theme = systemIsDark() ? "dark" : "light";
+    return;
+  }
+  document.documentElement.dataset.theme = pref;
 }
 
 export function setThemePref(pref: ThemePref) {
@@ -34,19 +59,6 @@ export function setThemePref(pref: ThemePref) {
     /* localStorage indisponível */
   }
   applyTheme(pref);
-}
-
-/** Cicla system → light → dark → system. */
-export function cycleTheme(): ThemePref {
-  const order: ThemePref[] = ["system", "light", "dark"];
-  const next = order[(order.indexOf(getThemePref()) + 1) % order.length];
-  setThemePref(next);
-  return next;
-}
-
-/** Ícone da preferência atual (☀/🌙/🖥). */
-export function themeIcon(pref: ThemePref = getThemePref()): string {
-  return pref === "light" ? "☀" : pref === "dark" ? "🌙" : "🖥";
 }
 
 /** Aplica no boot e reage a mudanças do sistema quando a pref é "system". */

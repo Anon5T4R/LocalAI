@@ -11,12 +11,20 @@ import {
   type SamplingParams,
   type Usage,
 } from "./llama";
-import { t, localeTag, LOCALE_LABELS, getLocale, setLocale, type Locale } from "./lib/i18n";
+import {
+  t,
+  localeTag,
+  LOCALE_LABELS,
+  getLocale,
+  setLocale,
+  type Locale,
+  type MessageKey,
+} from "./lib/i18n";
 import {
   initTheme,
-  cycleTheme,
-  themeIcon,
+  setThemePref,
   getThemePref,
+  THEME_PREFS,
   type ThemePref,
 } from "./lib/theme";
 
@@ -395,27 +403,28 @@ function switchView(view: string) {
 }
 
 // ---------- Config: tema + idioma (topbar) ----------
-function themeTitle(pref: ThemePref): string {
-  return pref === "light"
-    ? t("theme.light")
-    : pref === "dark"
-      ? t("theme.dark")
-      : t("theme.system");
+function themeLabel(pref: ThemePref): string {
+  return t(`theme.${pref}` as MessageKey);
 }
 
 function buildConfigCluster(): HTMLElement {
-  const themeBtn = h(
-    "button",
+  // Select (e não botão de ciclo): com 8 temas, ciclar seria inviável.
+  // Espelha o .lang-select ao lado.
+  const themeSel = h(
+    "select",
     {
-      class: "theme-btn",
-      title: themeTitle(getThemePref()),
-      onClick: () => {
-        const pref = cycleTheme(); // já persiste e aplica
-        themeBtn.textContent = themeIcon(pref);
-        themeBtn.title = themeTitle(pref);
-      },
+      class: "lang-select",
+      title: t("theme.title"),
+      onChange: (e: Event) =>
+        setThemePref((e.target as HTMLSelectElement).value as ThemePref),
     },
-    [themeIcon(getThemePref())],
+    THEME_PREFS.map((p) =>
+      h(
+        "option",
+        { value: p, ...(p === getThemePref() ? { selected: true } : {}) },
+        [themeLabel(p)],
+      ),
+    ),
   );
 
   const langSel = h(
@@ -434,7 +443,7 @@ function buildConfigCluster(): HTMLElement {
     ),
   );
 
-  return h("div", { class: "config-cluster" }, [themeBtn, langSel]);
+  return h("div", { class: "config-cluster" }, [themeSel, langSel]);
 }
 
 // ---------- Hardware ----------
