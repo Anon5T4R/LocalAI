@@ -1,6 +1,7 @@
 mod gguf;
 mod hardware;
 mod hub;
+mod quant;
 mod server;
 mod tuner;
 
@@ -60,6 +61,18 @@ fn hf_download(
 #[tauri::command]
 fn hf_cancel_download() {
     hub::cancel();
+}
+
+// ---------- Quantizacao de GGUF (llama-quantize) ----------
+
+#[tauri::command]
+fn quant_start(app: AppHandle, input: String, out_type: String) -> Result<String, String> {
+    quant::start(&app, input, out_type)
+}
+
+#[tauri::command]
+fn quant_cancel(app: AppHandle) {
+    quant::cancel(&app);
 }
 
 // ---------- Persistencia de conversas (arquivo no app_data_dir) ----------
@@ -191,6 +204,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(ServerState::default())
+        .manage(quant::QuantState::default())
         .invoke_handler(tauri::generate_handler![
             get_hardware,
             scan_models,
@@ -205,6 +219,8 @@ pub fn run() {
             hf_list_files,
             hf_download,
             hf_cancel_download,
+            quant_start,
+            quant_cancel,
             load_conversations,
             save_conversations
         ])
@@ -213,9 +229,11 @@ pub fn run() {
         .run(|app: &AppHandle, event| {
             if let RunEvent::ExitRequested { .. } = event {
                 server::kill_on_exit(app);
+                quant::kill_on_exit(app);
             }
             if let RunEvent::Exit = event {
                 server::kill_on_exit(app);
+                quant::kill_on_exit(app);
             }
         });
 }

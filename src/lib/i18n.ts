@@ -150,6 +150,32 @@ const pt = {
   "hub.doneLog": "[hub] download concluído: {path}",
   "hub.done": "✓ Baixado: {path}",
 
+  // ----- Quantizar -----
+  "tab.quant": "Quantizar",
+  "quant.hint":
+    "Gere uma versão menor de um modelo: escolha um GGUF pouco comprimido (F16/F32/BF16/Q8_0) e o formato de destino. O arquivo novo é criado ao lado do original — nada é sobrescrito.",
+  "quant.source": "Modelo de origem",
+  "quant.target": "Formato de destino",
+  "quant.noSources":
+    "Nenhum modelo F16/F32/BF16/Q8_0 encontrado. Re-quantizar um modelo já muito comprimido (Q4/Q5…) degrada a qualidade — baixe a versão F16 ou Q8_0 na aba “Baixar modelos”.",
+  "quant.start": "Quantizar",
+  "quant.cancel": "Cancelar",
+  "quant.running": "Quantizando {name} → {type}",
+  "quant.preparing": "Preparando…",
+  "quant.progress": "{done}/{total} tensores ({pct}%)",
+  "quant.done": "✓ Quantizado: {path}",
+  "quant.doneLog": "[quant] concluído: {path}",
+  "quant.desc.Q4_K_M":
+    "~4,8 bits/peso — o equilíbrio padrão entre tamanho e qualidade; a escolha certa pra maioria dos usos",
+  "quant.desc.Q5_K_M":
+    "~5,7 bits/peso — um pouco maior, perda de qualidade quase imperceptível",
+  "quant.desc.Q6_K":
+    "~6,6 bits/peso — quase a qualidade do Q8_0 com ~80% do tamanho",
+  "quant.desc.Q8_0":
+    "~8,5 bits/peso — praticamente sem perda; bom “mestre” pra re-quantizar depois",
+  "quant.desc.Q4_0":
+    "~4,3 bits/peso — formato antigo e rápido de gerar; prefira Q4_K_M salvo por compatibilidade",
+
   // ----- Tema / idioma -----
   "theme.title": "Tema",
   "theme.light": "Claro",
@@ -284,6 +310,31 @@ const en: Record<MessageKey, string> = {
   "hub.doneLog": "[hub] download finished: {path}",
   "hub.done": "✓ Downloaded: {path}",
 
+  "tab.quant": "Quantize",
+  "quant.hint":
+    "Create a smaller version of a model: pick a lightly-compressed GGUF (F16/F32/BF16/Q8_0) and the target format. The new file is created next to the original — nothing gets overwritten.",
+  "quant.source": "Source model",
+  "quant.target": "Target format",
+  "quant.noSources":
+    "No F16/F32/BF16/Q8_0 model found. Re-quantizing an already heavily compressed model (Q4/Q5…) degrades quality — download the F16 or Q8_0 version in the “Download models” tab.",
+  "quant.start": "Quantize",
+  "quant.cancel": "Cancel",
+  "quant.running": "Quantizing {name} → {type}",
+  "quant.preparing": "Preparing…",
+  "quant.progress": "{done}/{total} tensors ({pct}%)",
+  "quant.done": "✓ Quantized: {path}",
+  "quant.doneLog": "[quant] finished: {path}",
+  "quant.desc.Q4_K_M":
+    "~4.8 bits/weight — the standard size/quality balance; the right pick for most uses",
+  "quant.desc.Q5_K_M":
+    "~5.7 bits/weight — slightly bigger, nearly imperceptible quality loss",
+  "quant.desc.Q6_K":
+    "~6.6 bits/weight — almost Q8_0 quality at ~80% of the size",
+  "quant.desc.Q8_0":
+    "~8.5 bits/weight — practically lossless; a good “master” to re-quantize from later",
+  "quant.desc.Q4_0":
+    "~4.3 bits/weight — legacy, fast-to-generate format; prefer Q4_K_M unless you need compatibility",
+
   "theme.title": "Theme",
   "theme.light": "Light",
   "theme.dark": "Dark",
@@ -414,6 +465,31 @@ const es: Record<MessageKey, string> = {
   "hub.alreadyDownloading": "[hub] ya hay una descarga en curso",
   "hub.doneLog": "[hub] descarga finalizada: {path}",
   "hub.done": "✓ Descargado: {path}",
+
+  "tab.quant": "Cuantizar",
+  "quant.hint":
+    "Genera una versión más pequeña de un modelo: elige un GGUF poco comprimido (F16/F32/BF16/Q8_0) y el formato de destino. El archivo nuevo se crea junto al original — no se sobrescribe nada.",
+  "quant.source": "Modelo de origen",
+  "quant.target": "Formato de destino",
+  "quant.noSources":
+    "No se encontró ningún modelo F16/F32/BF16/Q8_0. Re-cuantizar un modelo ya muy comprimido (Q4/Q5…) degrada la calidad — descarga la versión F16 o Q8_0 en la pestaña “Descargar modelos”.",
+  "quant.start": "Cuantizar",
+  "quant.cancel": "Cancelar",
+  "quant.running": "Cuantizando {name} → {type}",
+  "quant.preparing": "Preparando…",
+  "quant.progress": "{done}/{total} tensores ({pct}%)",
+  "quant.done": "✓ Cuantizado: {path}",
+  "quant.doneLog": "[quant] finalizado: {path}",
+  "quant.desc.Q4_K_M":
+    "~4,8 bits/peso — el equilibrio estándar entre tamaño y calidad; la elección correcta para la mayoría de los usos",
+  "quant.desc.Q5_K_M":
+    "~5,7 bits/peso — un poco más grande, pérdida de calidad casi imperceptible",
+  "quant.desc.Q6_K":
+    "~6,6 bits/peso — casi la calidad del Q8_0 con ~80% del tamaño",
+  "quant.desc.Q8_0":
+    "~8,5 bits/peso — prácticamente sin pérdida; buen “maestro” para re-cuantizar después",
+  "quant.desc.Q4_0":
+    "~4,3 bits/peso — formato antiguo y rápido de generar; prefiere Q4_K_M salvo por compatibilidad",
 
   "theme.title": "Tema",
   "theme.light": "Claro",

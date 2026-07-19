@@ -15,8 +15,10 @@ permissions:
   contents: write
 
 env:
-  # Versao dos binarios do llama.cpp a empacotar. Bump aqui para atualizar.
-  LLAMA_TAG: b9723
+  # Versao dos binarios do llama.cpp a empacotar (mesma da suite toda desde
+  # 2026-07-18). Bump aqui exige recalcular os llama_sha256 na matriz abaixo —
+  # baixar os 3 assets e rodar sha256sum (politica: docs/planos/espelho-de-binarios.md).
+  LLAMA_TAG: b10066
 
 jobs:
   # Monta a matriz dinamicamente: pula macOS quando run_macos=false (validacao barata).
@@ -28,10 +30,17 @@ jobs:
       - id: set
         shell: bash
         run: |
-          base='{"os":"windows-latest","llama_variant":"win-vulkan-x64","ext":"zip","tauri_args":"--bundles nsis"},{"os":"ubuntu-22.04","llama_variant":"ubuntu-vulkan-x64","ext":"tar.gz","tauri_args":"--bundles deb,appimage"}'
+          # Supply-chain: versao FIXA + sha256 conferido antes de extrair, como nos
+          # fetch-llama.* do resto da suite. Windows/Linux baixam do espelho
+          # Anon5T4R/Local-runtimes (release v1; hashes = MANIFEST.json do espelho,
+          # identicos ao upstream). O asset macos-arm64 NAO esta no espelho, entao
+          # o macOS segue no upstream ggml-org — mas pinado e verificado igual.
+          mirror="https://github.com/Anon5T4R/Local-runtimes/releases/download/v1"
+          upstream="https://github.com/ggml-org/llama.cpp/releases/download/b10066"
+          base='{"os":"windows-latest","llama_variant":"win-vulkan-x64","ext":"zip","llama_base":"'$mirror'","llama_sha256":"57cb5dd3143b2814b8d1d14587867628bfb126536abfa7085ca9560c4919d998","tauri_args":"--bundles nsis"},{"os":"ubuntu-22.04","llama_variant":"ubuntu-vulkan-x64","ext":"tar.gz","llama_base":"'$mirror'","llama_sha256":"37831256be31aacf8ffe5bfc0a88040ef6f0224c220777b28fd77d4198a0b902","tauri_args":"--bundles deb,appimage"}'
           # macos-13 (Intel) foi aposentado pelo GitHub — jobs ficavam presos na fila
           # para sempre (causa das releases "cancelled"). Só ARM (macos-latest) agora.
-          mac='{"os":"macos-latest","llama_variant":"macos-arm64","ext":"tar.gz","tauri_args":"--bundles dmg"}'
+          mac='{"os":"macos-latest","llama_variant":"macos-arm64","ext":"tar.gz","llama_base":"'$upstream'","llama_sha256":"52db287b6f39dfab93cc0dd1953c13d2108ca12c2817431c79a169ed3da57597","tauri_args":"--bundles dmg"}'
           if [ "${{ github.event.inputs.run_macos }}" = "false" ]; then
             echo "matrix={\"include\":[$base]}" >> "$GITHUB_OUTPUT"
           else
@@ -79,8 +88,14 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
           $asset = "llama-${{ env.LLAMA_TAG }}-bin-${{ matrix.llama_variant }}.${{ matrix.ext }}"
-          $url = "https://github.com/ggml-org/llama.cpp/releases/download/${{ env.LLAMA_TAG }}/$asset"
+          $url = "${{ matrix.llama_base }}/$asset"
           Invoke-WebRequest $url -OutFile llama.zip
+          # Confere ANTES de extrair: binario adulterado nao chega a ser descompactado.
+          $got = (Get-FileHash -Path llama.zip -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne "${{ matrix.llama_sha256 }}") {
+            throw "SHA256 NAO BATE! esperado ${{ matrix.llama_sha256 }}, recebido $got"
+          }
+          Write-Host "sha256 conferido: $got"
           Expand-Archive llama.zip -DestinationPath src-tauri/binaries -Force
 
       - name: Baixar runtime do llama.cpp (Linux/macOS)
@@ -89,11 +104,18 @@ jobs:
         run: |
           mkdir -p src-tauri/binaries
           asset="llama-${LLAMA_TAG}-bin-${{ matrix.llama_variant }}.${{ matrix.ext }}"
-          url="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/${asset}"
-          curl -L -o llama.tar.gz "$url"
+          url="${{ matrix.llama_base }}/${asset}"
+          curl -fL --retry 3 --retry-delay 2 -o llama.tar.gz "$url"
+          # Confere ANTES de extrair (sha256sum no Ubuntu, shasum no macOS).
+          got=$( (sha256sum llama.tar.gz 2>/dev/null || shasum -a 256 llama.tar.gz) | cut -d' ' -f1 )
+          if [ "$got" != "${{ matrix.llama_sha256 }}" ]; then
+            echo "SHA256 NAO BATE! esperado ${{ matrix.llama_sha256 }}, recebido $got" >&2
+            exit 1
+          fi
+          echo "sha256 conferido: $got"
           # os tarballs extraem para uma pasta llama-<tag>/ ; achatamos com strip-components
           tar -xzf llama.tar.gz -C src-tauri/binaries --strip-components=1
-          chmod +x src-tauri/binaries/llama-server || true
+          chmod +x src-tauri/binaries/llama-server src-tauri/binaries/llama-quantize || true
 
       - name: Cargo.lock em dia (--locked)
         working-directory: src-tauri

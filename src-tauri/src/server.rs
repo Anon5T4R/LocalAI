@@ -90,7 +90,8 @@ fn build_args(cfg: &LlamaConfig) -> Vec<String> {
     push(&mut a, "-ub", cfg.ubatch.to_string());
     push(&mut a, "-ngl", cfg.n_gpu_layers.to_string());
     push(&mut a, "--flash-attn", cfg.flash_attn.clone());
-    // Desliga o auto-fit do llama.cpp b9723: como ja definimos ngl/ctx/batch
+    // Desliga o auto-fit do llama.cpp (b9723+; flag conferida tambem no
+    // b10066 empacotado pelo CI): como ja definimos ngl/ctx/batch
     // explicitamente, o auto-fit nao tem o que ajustar e TRAVA o load sob
     // pressao de RAM (fica preso em "fitting params to device memory").
     push(&mut a, "-fit", "off".to_string());

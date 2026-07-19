@@ -975,3 +975,56 @@ button {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ---------- Quantizar ---------- */
+.quant {
+  padding: 16px;
+  max-width: 720px;
+}
+.quant-hint {
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.quant .ctrl select {
+  width: auto;
+  max-width: 420px;
+}
+.quant-desc {
+  padding: 8px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.quant-start {
+  margin-top: 12px;
+}
+.quant .hub-status {
+  margin-top: 14px;
+}
+
+/* ---------- Toast ---------- */
+.toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1000;
+  max-width: 440px;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--accent2);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  word-break: break-all;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.3s, transform 0.3s;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast.err {
+  border-color: var(--danger);
+}

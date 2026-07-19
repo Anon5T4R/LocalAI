@@ -163,6 +163,13 @@ const state = {
   pendingImage: null as string | null,
   /** download do Hub em andamento (chave repo::file) */
   hubActive: null as string | null,
+  /** quantização em andamento (caminho de saída planejado) */
+  quantActive: null as string | null,
+  /** nome do modelo sendo quantizado (pro rótulo de progresso) */
+  quantName: "",
+  /** seleções da aba Quantizar (sobrevivem ao re-render pós-scan) */
+  quantSrc: null as string | null,
+  quantDst: "Q4_K_M",
 };
 
 // ---------- Helpers de DOM ----------
@@ -363,11 +370,13 @@ function buildShell() {
             t("tab.tuner"),
           ]),
           h("button", { class: "tab", "data-view": "hub" }, [t("tab.hub")]),
+          h("button", { class: "tab", "data-view": "quant" }, [t("tab.quant")]),
           h("button", { class: "tab", "data-view": "logs" }, [t("tab.logs")]),
         ]),
         h("section", { id: "view-chat", class: "view" }, []),
         h("section", { id: "view-tuner", class: "view hidden" }, []),
         h("section", { id: "view-hub", class: "view hidden" }, []),
+        h("section", { id: "view-quant", class: "view hidden" }, []),
         h("section", { id: "view-logs", class: "view hidden" }, [
           h("pre", { id: "logs", class: "logs" }, []),
         ]),
@@ -386,6 +395,7 @@ function buildShell() {
 
   buildChatView();
   buildHubView();
+  buildQuantView();
 }
 
 function switchView(view: string) {
@@ -397,7 +407,7 @@ function switchView(view: string) {
         (t as HTMLElement).dataset.view === view,
       ),
     );
-  for (const v of ["chat", "tuner", "hub", "logs"]) {
+  for (const v of ["chat", "tuner", "hub", "quant", "logs"]) {
     $(`#view-${v}`).classList.toggle("hidden", v !== view);
   }
 }
@@ -574,6 +584,7 @@ async function scan() {
     card.dataset.path = m.path;
     box.append(card);
   }
+  renderQuantForm(); // a lista de origens da aba Quantizar acompanha o scan
 }
 function tag(t: string) {
   return h("span", { class: "tag" }, [t]);
@@ -1462,6 +1473,136 @@ function showHubStatus(file: string, downloaded: number, total: number | null) {
   );
 }
 
+// ---------- Quantizar (llama-quantize) ----------
+// Origens que fazem sentido: pouco/nada comprimidas. Re-quantizar Q4/Q5 degrada.
+const QUANT_SOURCES = ["F16", "F32", "BF16", "Q8_0"];
+const QUANT_TARGETS = ["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "Q4_0"];
+
+function buildQuantView() {
+  const v = $("#view-quant");
+  v.innerHTML = "";
+  v.append(
+    h("div", { class: "quant" }, [
+      h("div", { class: "panel" }, [
+        h("h3", {}, [t("tab.quant")]),
+        h("div", { class: "muted quant-hint" }, [t("quant.hint")]),
+        h("div", { id: "quant-form" }, []),
+        h("div", { id: "quant-status", class: "hub-status hidden" }, []),
+      ]),
+    ]),
+  );
+  renderQuantForm();
+}
+
+function quantDescKey(q: string): MessageKey {
+  return `quant.desc.${q}` as MessageKey;
+}
+
+function renderQuantForm() {
+  const box = $("#quant-form");
+  if (!box) return;
+  box.innerHTML = "";
+  const sources = state.models.filter((m) =>
+    QUANT_SOURCES.includes(m.quant.toUpperCase()),
+  );
+  if (!sources.length) {
+    box.append(h("div", { class: "muted" }, [t("quant.noSources")]));
+    return;
+  }
+  if (!sources.some((m) => m.path === state.quantSrc)) {
+    state.quantSrc = sources[0].path;
+  }
+  const desc = h("div", { class: "muted quant-desc" }, [
+    t(quantDescKey(state.quantDst)),
+  ]);
+  box.append(
+    ctrlSelect(
+      t("quant.source"),
+      sources.map((m) => [m.path, `${m.name} · ${m.quant} · ${m.size_gb.toFixed(1)} GB`]),
+      state.quantSrc!,
+      (val) => {
+        state.quantSrc = val;
+      },
+    ),
+    ctrlSelect(
+      t("quant.target"),
+      QUANT_TARGETS.map((q) => [q, q]),
+      state.quantDst,
+      (val) => {
+        state.quantDst = val;
+        desc.textContent = t(quantDescKey(val));
+      },
+    ),
+    desc,
+    h(
+      "button",
+      {
+        class: "primary quant-start",
+        ...(state.quantActive ? { disabled: true } : {}),
+        onClick: startQuant,
+      },
+      [t("quant.start")],
+    ),
+  );
+}
+
+async function startQuant() {
+  if (state.quantActive) return;
+  const src = state.models.find((m) => m.path === state.quantSrc);
+  if (!src) return;
+  try {
+    const out = await invoke<string>("quant_start", {
+      input: src.path,
+      outType: state.quantDst,
+    });
+    state.quantActive = out;
+    state.quantName = src.name;
+    addLog(`[quant] ${src.name} → ${state.quantDst}: ${out}`);
+    showQuantStatus(src.name, 0, 0);
+    renderQuantForm();
+  } catch (e) {
+    showToast(String(e), true);
+  }
+}
+
+function showQuantStatus(name: string, done: number, total: number) {
+  const s = $("#quant-status");
+  if (!s) return;
+  s.classList.remove("hidden");
+  const pct = total ? Math.min(100, (done / total) * 100) : 0;
+  const label = total
+    ? t("quant.progress", { done, total, pct: pct.toFixed(0) })
+    : t("quant.preparing");
+  s.innerHTML = "";
+  s.append(
+    h("div", { class: "hub-status-row" }, [
+      h("span", { class: "hub-fname" }, [
+        t("quant.running", { name, type: state.quantDst }),
+      ]),
+      h("span", {}, [label]),
+      h(
+        "button",
+        { class: "mini", onClick: () => invoke("quant_cancel") },
+        [t("quant.cancel")],
+      ),
+    ]),
+    h("div", { class: "bar" }, [
+      h("div", { class: "bar-fill", style: `width:${pct}%` }),
+    ]),
+  );
+}
+
+// ---------- Toast ----------
+function showToast(msg: string, isError = false) {
+  const el = h("div", { class: "toast" + (isError ? " err" : "") }, [msg]);
+  document.body.append(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 400);
+  }, 7000);
+}
+
 // ---------- Init ----------
 async function init() {
   initTheme();
@@ -1524,6 +1665,28 @@ async function init() {
           scan();
         });
       }
+    },
+  );
+
+  await listen<{ done: number; total: number }>("quant-progress", (e) =>
+    showQuantStatus(state.quantName, e.payload.done, e.payload.total),
+  );
+  await listen<{ path: string | null; error: string | null }>(
+    "quant-done",
+    (e) => {
+      state.quantActive = null;
+      state.quantName = "";
+      $("#quant-status")?.classList.add("hidden");
+      if (e.payload.error) {
+        addLog(`[quant] ${e.payload.error}`);
+        showToast(e.payload.error, true);
+      } else {
+        const path = String(e.payload.path);
+        addLog(t("quant.doneLog", { path }));
+        showToast(t("quant.done", { path }));
+        scan(); // o .gguf novo aparece na lista (e na aba Quantizar, se Q8_0)
+      }
+      renderQuantForm();
     },
   );
 
