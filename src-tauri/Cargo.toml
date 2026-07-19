@@ -1,6 +1,6 @@
 [package]
 name = "localai-studio"
-version = "0.5.0"
+version = "0.6.0"
 description = "Runner de GGUF otimizado para CPU/iGPU (llama.cpp)"
 authors = ["joaof"]
 edition = "2021"

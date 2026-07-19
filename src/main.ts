@@ -170,7 +170,18 @@ const state = {
   /** seleções da aba Quantizar (sobrevivem ao re-render pós-scan) */
   quantSrc: null as string | null,
   quantDst: "Q4_K_M",
+  /** comparador (llama-bench): seleção, fila ativa e resultados */
+  benchSel: new Set<string>(),
+  benchActive: false,
+  benchResults: [] as BenchResult[],
 };
+
+interface BenchResult {
+  path: string;
+  ppTps: number | null;
+  tgTps: number | null;
+  error: string | null;
+}
 
 // ---------- Helpers de DOM ----------
 function h<K extends keyof HTMLElementTagNameMap>(
@@ -371,12 +382,14 @@ function buildShell() {
           ]),
           h("button", { class: "tab", "data-view": "hub" }, [t("tab.hub")]),
           h("button", { class: "tab", "data-view": "quant" }, [t("tab.quant")]),
+          h("button", { class: "tab", "data-view": "bench" }, [t("tab.bench")]),
           h("button", { class: "tab", "data-view": "logs" }, [t("tab.logs")]),
         ]),
         h("section", { id: "view-chat", class: "view" }, []),
         h("section", { id: "view-tuner", class: "view hidden" }, []),
         h("section", { id: "view-hub", class: "view hidden" }, []),
         h("section", { id: "view-quant", class: "view hidden" }, []),
+        h("section", { id: "view-bench", class: "view hidden" }, []),
         h("section", { id: "view-logs", class: "view hidden" }, [
           h("pre", { id: "logs", class: "logs" }, []),
         ]),
@@ -396,6 +409,7 @@ function buildShell() {
   buildChatView();
   buildHubView();
   buildQuantView();
+  buildBenchView();
 }
 
 function switchView(view: string) {
@@ -407,7 +421,7 @@ function switchView(view: string) {
         (t as HTMLElement).dataset.view === view,
       ),
     );
-  for (const v of ["chat", "tuner", "hub", "quant", "logs"]) {
+  for (const v of ["chat", "tuner", "hub", "quant", "bench", "logs"]) {
     $(`#view-${v}`).classList.toggle("hidden", v !== view);
   }
 }
@@ -585,6 +599,7 @@ async function scan() {
     box.append(card);
   }
   renderQuantForm(); // a lista de origens da aba Quantizar acompanha o scan
+  renderBenchForm(); // idem para a lista de modelos do comparador
 }
 function tag(t: string) {
   return h("span", { class: "tag" }, [t]);
@@ -1592,6 +1607,199 @@ function showQuantStatus(name: string, done: number, total: number) {
   );
 }
 
+// ---------- Comparar (llama-bench) ----------
+// Roda o llama-bench SEQUENCIALMENTE nos modelos marcados (um processo por
+// vez, prioridade baixa no backend) e tabula pp/tg tok/s + Δ% vs o mais rápido.
+
+function buildBenchView() {
+  const v = $("#view-bench");
+  v.innerHTML = "";
+  v.append(
+    h("div", { class: "quant" }, [
+      h("div", { class: "panel" }, [
+        h("h3", {}, [t("tab.bench")]),
+        h("div", { class: "muted quant-hint" }, [t("bench.hint")]),
+        h("div", { class: "warn-txt quant-hint" }, [t("bench.warn")]),
+        h("div", { id: "bench-form" }, []),
+        h("div", { id: "bench-status", class: "hub-status hidden" }, []),
+        h("div", { id: "bench-results" }, []),
+      ]),
+    ]),
+  );
+  renderBenchForm();
+  renderBenchResults();
+}
+
+function renderBenchForm() {
+  const box = $("#bench-form");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!state.models.length) {
+    box.append(h("div", { class: "muted" }, [t("bench.noModels")]));
+    return;
+  }
+  // seleção só de modelos que ainda existem na lista
+  const known = new Set(state.models.map((m) => m.path));
+  for (const p of [...state.benchSel]) {
+    if (!known.has(p)) state.benchSel.delete(p);
+  }
+
+  const startBtn = h(
+    "button",
+    {
+      class: "primary",
+      ...(state.benchActive || state.benchSel.size === 0
+        ? { disabled: true }
+        : {}),
+      onClick: startBench,
+    },
+    [t("bench.start")],
+  );
+
+  const list = h(
+    "div",
+    { class: "bench-models" },
+    state.models.map((m) =>
+      h("label", { class: "bench-row" }, [
+        h("input", {
+          type: "checkbox",
+          ...(state.benchSel.has(m.path) ? { checked: true } : {}),
+          ...(state.benchActive ? { disabled: true } : {}),
+          onChange: (e: Event) => {
+            if ((e.target as HTMLInputElement).checked) {
+              state.benchSel.add(m.path);
+            } else {
+              state.benchSel.delete(m.path);
+            }
+            if (state.benchSel.size === 0) {
+              startBtn.setAttribute("disabled", "true");
+            } else if (!state.benchActive) {
+              startBtn.removeAttribute("disabled");
+            }
+          },
+        }),
+        h("span", { class: "bench-name", title: m.path }, [m.name]),
+        h("span", { class: "bench-meta" }, [
+          `${m.quant} · ${m.size_gb.toFixed(1)} GB`,
+        ]),
+      ]),
+    ),
+  );
+
+  box.append(
+    h("div", { class: "muted quant-desc" }, [t("bench.selectHint")]),
+    list,
+    startBtn,
+  );
+}
+
+async function startBench() {
+  if (state.benchActive || !state.benchSel.size) return;
+  // mantém a ordem da lista de modelos (e não a ordem dos cliques)
+  const paths = state.models
+    .filter((m) => state.benchSel.has(m.path))
+    .map((m) => m.path);
+  try {
+    await invoke("bench_start", { paths });
+    state.benchActive = true;
+    state.benchResults = [];
+    addLog(`[bench] ${paths.length} modelo(s) na fila`);
+    renderBenchForm();
+    renderBenchResults();
+  } catch (e) {
+    showToast(String(e), true);
+  }
+}
+
+function benchModelOf(path: string): ModelInfo | null {
+  return state.models.find((m) => m.path === path) ?? null;
+}
+
+function showBenchStatus(index: number, total: number, path: string) {
+  const s = $("#bench-status");
+  if (!s) return;
+  s.classList.remove("hidden");
+  const name = benchModelOf(path)?.name ?? path;
+  const pct = total ? ((index - 1) / total) * 100 : 0;
+  s.innerHTML = "";
+  s.append(
+    h("div", { class: "hub-status-row" }, [
+      h("span", { class: "hub-fname", title: path }, [
+        t("bench.running", { name, index, total }),
+      ]),
+      h(
+        "button",
+        { class: "mini", onClick: () => invoke("bench_cancel") },
+        [t("bench.cancel")],
+      ),
+    ]),
+    h("div", { class: "bar" }, [
+      h("div", { class: "bar-fill", style: `width:${pct}%` }),
+    ]),
+  );
+}
+
+function renderBenchResults() {
+  const box = $("#bench-results");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!state.benchResults.length) return;
+
+  // Δ% calculado sobre a geração (tg): é o número que o usuário sente no chat.
+  const best = Math.max(
+    ...state.benchResults.map((r) => r.tgTps ?? 0),
+  );
+  const rows = state.benchResults.map((r) => {
+    const m = benchModelOf(r.path);
+    const name = m?.name ?? r.path;
+    const size = m ? `${m.size_gb.toFixed(1)} GB` : "—";
+    if (r.error) {
+      return h("tr", {}, [
+        h("td", { class: "bench-name", title: r.path }, [
+          `${name}${m ? ` · ${m.quant}` : ""}`,
+        ]),
+        h("td", {}, [size]),
+        h("td", { class: "warn-txt", colspan: "3", title: r.error }, [
+          t("bench.error"),
+        ]),
+      ]);
+    }
+    const tg = r.tgTps;
+    const isBest = tg != null && best > 0 && tg === best;
+    const delta =
+      tg != null && best > 0 && !isBest
+        ? `${(((tg - best) / best) * 100).toFixed(0)}%`
+        : isBest
+          ? t("bench.fastest")
+          : "—";
+    return h("tr", { class: isBest ? "bench-best" : "" }, [
+      h("td", { class: "bench-name", title: r.path }, [
+        `${name}${m ? ` · ${m.quant}` : ""}`,
+      ]),
+      h("td", {}, [size]),
+      h("td", {}, [r.ppTps != null ? r.ppTps.toFixed(1) : "—"]),
+      h("td", {}, [tg != null ? tg.toFixed(1) : "—"]),
+      h("td", {}, [delta]),
+    ]);
+  });
+
+  box.append(
+    h("h3", {}, [t("bench.results")]),
+    h("table", { class: "bench-table" }, [
+      h("thead", {}, [
+        h("tr", {}, [
+          h("th", {}, [t("bench.col.model")]),
+          h("th", {}, [t("bench.col.size")]),
+          h("th", {}, [t("bench.col.pp")]),
+          h("th", {}, [t("bench.col.tg")]),
+          h("th", {}, [t("bench.col.delta")]),
+        ]),
+      ]),
+      h("tbody", {}, rows),
+    ]),
+  );
+}
+
 // ---------- Toast ----------
 function showToast(msg: string, isError = false) {
   const el = h("div", { class: "toast" + (isError ? " err" : "") }, [msg]);
@@ -1689,6 +1897,30 @@ async function init() {
       renderQuantForm();
     },
   );
+
+  await listen<{ index: number; total: number; path: string }>(
+    "bench-progress",
+    (e) => showBenchStatus(e.payload.index, e.payload.total, e.payload.path),
+  );
+  await listen<BenchResult>("bench-result", (e) => {
+    state.benchResults.push(e.payload);
+    if (e.payload.error) {
+      addLog(`[bench] ${e.payload.path}: ${e.payload.error}`);
+    }
+    renderBenchResults();
+  });
+  await listen<{ cancelled: boolean }>("bench-done", (e) => {
+    state.benchActive = false;
+    $("#bench-status")?.classList.add("hidden");
+    if (e.payload.cancelled) {
+      addLog(`[bench] ${t("bench.canceled")}`);
+      showToast(t("bench.canceled"), true);
+    } else {
+      addLog(t("bench.doneLog"));
+    }
+    renderBenchForm();
+    renderBenchResults();
+  });
 
   await loadHardware();
   await loadDirs();

@@ -176,6 +176,30 @@ const pt = {
   "quant.desc.Q4_0":
     "~4,3 bits/peso — formato antigo e rápido de gerar; prefira Q4_K_M salvo por compatibilidade",
 
+  // ----- Comparar (llama-bench) -----
+  "tab.bench": "Comparar",
+  "bench.hint":
+    "Meça a velocidade real de cada modelo neste computador (llama-bench: prompt de 512 tokens + geração de 128) e compare lado a lado.",
+  "bench.warn":
+    "⚠ Leva alguns minutos por modelo e roda um por vez. Pare o servidor antes de comparar — um modelo carregado disputa CPU/RAM e distorce os números.",
+  "bench.noModels":
+    "Nenhum modelo na lista. Adicione uma pasta ou baixe um modelo na aba “Baixar modelos”.",
+  "bench.selectHint":
+    "Marque 2 ou mais modelos (ou quantizações do mesmo modelo) para comparar:",
+  "bench.start": "Comparar",
+  "bench.cancel": "Cancelar",
+  "bench.running": "Medindo {name} ({index}/{total})…",
+  "bench.results": "Resultados",
+  "bench.col.model": "Modelo",
+  "bench.col.size": "Tamanho",
+  "bench.col.pp": "Prompt (t/s)",
+  "bench.col.tg": "Geração (t/s)",
+  "bench.col.delta": "Δ vs mais rápido",
+  "bench.fastest": "mais rápido",
+  "bench.error": "erro — detalhes nos Logs",
+  "bench.canceled": "Comparação cancelada.",
+  "bench.doneLog": "[bench] comparação concluída",
+
   // ----- Tema / idioma -----
   "theme.title": "Tema",
   "theme.light": "Claro",
@@ -335,6 +359,29 @@ const en: Record<MessageKey, string> = {
   "quant.desc.Q4_0":
     "~4.3 bits/weight — legacy, fast-to-generate format; prefer Q4_K_M unless you need compatibility",
 
+  "tab.bench": "Compare",
+  "bench.hint":
+    "Measure each model's real speed on this computer (llama-bench: 512-token prompt + 128-token generation) and compare side by side.",
+  "bench.warn":
+    "⚠ Takes a few minutes per model and runs one at a time. Stop the server before comparing — a loaded model competes for CPU/RAM and skews the numbers.",
+  "bench.noModels":
+    "No models in the list. Add a folder or download a model in the “Download models” tab.",
+  "bench.selectHint":
+    "Check 2 or more models (or quantizations of the same model) to compare:",
+  "bench.start": "Compare",
+  "bench.cancel": "Cancel",
+  "bench.running": "Benchmarking {name} ({index}/{total})…",
+  "bench.results": "Results",
+  "bench.col.model": "Model",
+  "bench.col.size": "Size",
+  "bench.col.pp": "Prompt (t/s)",
+  "bench.col.tg": "Generation (t/s)",
+  "bench.col.delta": "Δ vs fastest",
+  "bench.fastest": "fastest",
+  "bench.error": "error — details in Logs",
+  "bench.canceled": "Comparison cancelled.",
+  "bench.doneLog": "[bench] comparison finished",
+
   "theme.title": "Theme",
   "theme.light": "Light",
   "theme.dark": "Dark",
@@ -490,6 +537,29 @@ const es: Record<MessageKey, string> = {
     "~8,5 bits/peso — prácticamente sin pérdida; buen “maestro” para re-cuantizar después",
   "quant.desc.Q4_0":
     "~4,3 bits/peso — formato antiguo y rápido de generar; prefiere Q4_K_M salvo por compatibilidad",
+
+  "tab.bench": "Comparar",
+  "bench.hint":
+    "Mide la velocidad real de cada modelo en este equipo (llama-bench: prompt de 512 tokens + generación de 128) y compáralos lado a lado.",
+  "bench.warn":
+    "⚠ Tarda unos minutos por modelo y corre de uno en uno. Detén el servidor antes de comparar — un modelo cargado compite por CPU/RAM y distorsiona los números.",
+  "bench.noModels":
+    "Ningún modelo en la lista. Agrega una carpeta o descarga un modelo en la pestaña “Descargar modelos”.",
+  "bench.selectHint":
+    "Marca 2 o más modelos (o cuantizaciones del mismo modelo) para comparar:",
+  "bench.start": "Comparar",
+  "bench.cancel": "Cancelar",
+  "bench.running": "Midiendo {name} ({index}/{total})…",
+  "bench.results": "Resultados",
+  "bench.col.model": "Modelo",
+  "bench.col.size": "Tamaño",
+  "bench.col.pp": "Prompt (t/s)",
+  "bench.col.tg": "Generación (t/s)",
+  "bench.col.delta": "Δ vs el más rápido",
+  "bench.fastest": "el más rápido",
+  "bench.error": "error — detalles en Registros",
+  "bench.canceled": "Comparación cancelada.",
+  "bench.doneLog": "[bench] comparación finalizada",
 
   "theme.title": "Tema",
   "theme.light": "Claro",

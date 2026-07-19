@@ -1,3 +1,4 @@
+mod bench;
 mod gguf;
 mod hardware;
 mod hub;
@@ -73,6 +74,18 @@ fn quant_start(app: AppHandle, input: String, out_type: String) -> Result<String
 #[tauri::command]
 fn quant_cancel(app: AppHandle) {
     quant::cancel(&app);
+}
+
+// ---------- Comparador de modelos (llama-bench) ----------
+
+#[tauri::command]
+fn bench_start(app: AppHandle, paths: Vec<String>) -> Result<(), String> {
+    bench::start(&app, paths)
+}
+
+#[tauri::command]
+fn bench_cancel(app: AppHandle) {
+    bench::cancel(&app);
 }
 
 // ---------- Persistencia de conversas (arquivo no app_data_dir) ----------
@@ -205,6 +218,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(ServerState::default())
         .manage(quant::QuantState::default())
+        .manage(bench::BenchState::default())
         .invoke_handler(tauri::generate_handler![
             get_hardware,
             scan_models,
@@ -221,6 +235,8 @@ pub fn run() {
             hf_cancel_download,
             quant_start,
             quant_cancel,
+            bench_start,
+            bench_cancel,
             load_conversations,
             save_conversations
         ])
@@ -230,10 +246,12 @@ pub fn run() {
             if let RunEvent::ExitRequested { .. } = event {
                 server::kill_on_exit(app);
                 quant::kill_on_exit(app);
+                bench::kill_on_exit(app);
             }
             if let RunEvent::Exit = event {
                 server::kill_on_exit(app);
                 quant::kill_on_exit(app);
+                bench::kill_on_exit(app);
             }
         });
 }
