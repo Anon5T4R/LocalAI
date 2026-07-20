@@ -612,13 +612,19 @@ export function t(
   key: MessageKey,
   params?: Record<string, string | number>,
 ): string {
-  let msg: string = DICTS[getLocale()][key] ?? pt[key] ?? key;
-  if (params) {
-    for (const [k, v] of Object.entries(params)) {
-      msg = msg.split(`{${k}}`).join(String(v));
-    }
-  }
-  return msg;
+  const msg: string = DICTS[getLocale()][key] ?? pt[key] ?? key;
+  if (!params) return msg;
+  // Uma passada só, com callback. O loop `split/join` que estava aqui aplicava
+  // um parâmetro de cada vez SOBRE O RESULTADO do anterior: se o valor de um
+  // contivesse o texto `{outroParam}`, esse outro era substituído dentro dele.
+  // Não é hipotético — `err.serverResponded` recebe o corpo cru da resposta do
+  // servidor, que é texto de terceiro. Com uma passada, valor injetado é
+  // resultado final e nunca volta a ser lido como placeholder.
+  return msg.replace(/\{(\w+)\}/g, (inteiro, nome: string) =>
+    // Placeholder sem parâmetro correspondente fica LITERAL de propósito: some
+    // seria pior, porque a frase ficaria certa e faltando informação.
+    nome in params ? String(params[nome]) : inteiro,
+  );
 }
 
 /** Tag BCP-47 do locale atual (p/ formatação de números/datas e <html lang>). */

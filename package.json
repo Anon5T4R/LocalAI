@@ -1,7 +1,7 @@
 {
   "name": "localai-studio",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.6.2",
   "type": "module",
   "description": "Clone do LM Studio focado em extrair o maximo de CPUs/iGPUs com modelos GGUF (llama.cpp).",
   "scripts": {

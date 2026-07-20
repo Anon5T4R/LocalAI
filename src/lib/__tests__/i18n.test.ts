@@ -68,4 +68,27 @@ describe("t", () => {
       "Servidor respondeu 500: {text}",
     );
   });
+  /**
+   * Achado de 2026-07-20. O loop `split/join` aplicava um parametro de cada vez
+   * SOBRE O RESULTADO do anterior, entao um valor que contivesse o texto de
+   * outro placeholder tinha esse outro substituido DENTRO dele.
+   *
+   * Alcancavel: `text` aqui e o corpo cru da resposta do servidor. Um servidor
+   * que respondesse a string "{status}" faria a mensagem exibir "500" no lugar,
+   * inventando conteudo que ninguem enviou.
+   */
+  it("valor de parametro nao e reinterpretado como placeholder", () => {
+    env("pt-BR");
+    expect(t("err.serverResponded", { status: 500, text: "{status}" })).toBe(
+      "Servidor respondeu 500: {status}",
+    );
+  });
+
+  // O mesmo erro na outra ordem: o valor do primeiro parametro contendo o nome
+  // do segundo. Antes, ordem de iteracao decidia o resultado.
+  it("a ordem dos parametros nao muda o resultado", () => {
+    env("pt-BR");
+    const a = t("err.serverResponded", { status: "{text}", text: "ok" });
+    expect(a).toBe("Servidor respondeu {text}: ok");
+  });
 });
