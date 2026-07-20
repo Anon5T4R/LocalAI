@@ -4,6 +4,11 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    // Sem isto o `tsc` do `npm run build` EMITE um .js ao lado de cada .ts
+    // dentro de `src/` (não há `outDir`), e o .gitignore não pega nenhum —
+    // ficam prontos pra entrar num commit por engano. Quem compila de verdade
+    // é o Vite; aqui o tsc só confere tipo. (Padrão do LocalTerminal.)
+    "noEmit": true,
     "noUnusedLocals": false,
     "skipLibCheck": true,
     "isolatedModules": true,

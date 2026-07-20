@@ -69,7 +69,8 @@ const THINK_TAGS: Array<{ open: string; close: string }> = [
   { open: "<thinking>", close: "</thinking>" },
 ];
 
-class ThinkFilter {
+// exportado apenas para os testes (o streamChat e o unico consumidor real)
+export class ThinkFilter {
   private mode: "detect" | "reasoning" | "answer" = "detect";
   private buf = "";
   private close = "";
