@@ -6,7 +6,7 @@
   "description": "Clone do LM Studio focado em extrair o maximo de CPUs/iGPUs com modelos GGUF (llama.cpp).",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
