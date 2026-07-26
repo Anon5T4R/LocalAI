@@ -143,10 +143,21 @@ jobs:
       # que o CI nunca ve, porque o CI e justamente a distro onde funciona.
       # Ver Anon5T4R/linux-packaging.
       - name: Consertar o AppImage para outras distros
-        if: contains(matrix.bundles, 'appimage')
+        if: runner.os == 'Linux'
         uses: Anon5T4R/linux-packaging/fix-appimage@v1
         with:
           path: src-tauri/target/release/bundle/appimage
+
+      # Pacote nativo do pacman, reempacotado do .deb. O binario passa a usar
+      # o webkit2gtk/GTK DO SISTEMA em vez de carregar os do runner — que e a
+      # classe de bug que o AppImage tem por construcao. O Hub prefere este
+      # asset ao AppImage quando a maquina tem pacman.
+      - name: Empacotar para o Arch (.pkg.tar.zst)
+        if: runner.os == 'Linux'
+        uses: Anon5T4R/linux-packaging/arch-package@v1
+        with:
+          license: MIT
+          description: 'Clone enxuto do LM Studio para rodar modelos GGUF (llama.cpp) espremendo CPU'
 
       # Junta o que saiu num lugar só. Se o instalador não estiver aqui, o
       # release para AGORA, com a mensagem certa — e não daqui a 15 minutos
@@ -160,7 +171,8 @@ jobs:
           for p in src-tauri/target/release/bundle/nsis/*-setup.exe \
                    src-tauri/target/release/bundle/deb/*.deb \
                    src-tauri/target/release/bundle/appimage/*.AppImage \
-                   src-tauri/target/release/bundle/dmg/*.dmg; do
+                   src-tauri/target/release/bundle/dmg/*.dmg \
+                   dist-arch/*.pkg.tar.zst; do
             [ -e "$p" ] || continue
             cp "$p" dist-release/
             echo "empacotado: $(basename "$p") ($(du -h "$p" | cut -f1))"
