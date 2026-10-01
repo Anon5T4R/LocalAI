@@ -236,7 +236,7 @@ jobs:
         run: |
           set -uo pipefail
           cat > notas.md <<'EOF'
-          ## TaylorAI Studio __TAG__
+          ## LocalAI Studio __TAG__
 
           Builds automaticos via CI (Windows / Linux / macOS). Runtime do llama.cpp ${{ env.LLAMA_TAG }} incluso. Apenas o Windows foi testado no hardware-alvo; Linux/macOS sao build de CI.
           EOF
@@ -251,7 +251,7 @@ jobs:
               gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
             else
               gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
-                --title "TaylorAI Studio $TAG" --notes-file notas.md
+                --title "LocalAI Studio $TAG" --notes-file notas.md
             fi
           }
 
