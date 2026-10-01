@@ -140,6 +140,7 @@ const state = {
     use_speculative: null as boolean | null, // auto
     draft_path: null as string | null,
     draft_size_gb: null as number | null,
+    draft_max: 16, // janela do rascunho (--spec-draft-n-max)
   },
   draftCandidate: null as ModelInfo | null,
   ready: false,
@@ -174,10 +175,14 @@ const state = {
   benchSel: new Set<string>(),
   benchActive: false,
   benchResults: [] as BenchResult[],
+  /** A/B de offload: cada modelo roda 2x (-ngl 0 CPU pura / -ngl 99 GPU) */
+  benchCpuGpu: false,
 };
 
 interface BenchResult {
   path: string;
+  /** variante de offload do job: 0 = CPU, 99 = GPU total (null = default) */
+  ngl: number | null;
   ppTps: number | null;
   tgTps: number | null;
   error: string | null;
@@ -635,17 +640,23 @@ async function selectModel(m: ModelInfo) {
   switchView("tuner");
 }
 
-// Acha um modelo-rascunho p/ speculative: mesma arquitetura, bem menor que o alvo.
-function findDraft(target: ModelInfo): ModelInfo | null {
+// Candidatos a rascunho p/ speculative: mesma arquitetura, menores que o alvo.
+// O corte de 40%/2GB abaixo e so p/ o AUTO-pick; a lista completa alimenta o
+// seletor manual do tuner (o usuario pode preferir um rascunho maior).
+function listDrafts(target: ModelInfo): ModelInfo[] {
   const candidates = state.models.filter(
-    (m) =>
-      m.path !== target.path &&
-      m.arch === target.arch &&
-      m.size_gb < target.size_gb * 0.4 &&
-      m.size_gb < 2.0,
+    (m) => m.path !== target.path && m.arch === target.arch && m.size_gb < target.size_gb,
   );
   candidates.sort((a, b) => a.size_gb - b.size_gb);
-  return candidates[0] ?? null;
+  return candidates;
+}
+
+// Acha um modelo-rascunho p/ speculative: mesma arquitetura, bem menor que o alvo.
+function findDraft(target: ModelInfo): ModelInfo | null {
+  return (
+    listDrafts(target).find((m) => m.size_gb < target.size_gb * 0.4 && m.size_gb < 2.0) ??
+    null
+  );
 }
 
 async function refreshRecommendation() {
@@ -738,16 +749,57 @@ function renderTuner() {
               ),
             ]
           : []),
-        ...(state.draftCandidate
+        ...(listDrafts(m).length
           ? [
-              ctrlToggle(
-                t("tuner.speculative", { name: state.draftCandidate.name }),
-                c.draft_model != null,
-                (on) => {
-                  state.overrides.use_speculative = on;
+              // seletor manual do rascunho (speculative): lista todos os
+              // candidatos da mesma arquitetura menores que o alvo
+              ctrlSelect(
+                t("tuner.draftModel"),
+                [
+                  ["", t("tuner.draftNone")],
+                  ...listDrafts(m).map(
+                    (d) =>
+                      [
+                        d.path,
+                        `${d.name} · ${d.quant} · ${d.size_gb.toFixed(1)} GB`,
+                      ] as [string, string],
+                  ),
+                ],
+                state.overrides.draft_path ?? "",
+                (val) => {
+                  const d = state.models.find((m) => m.path === val) ?? null;
+                  state.overrides.draft_path = d?.path ?? null;
+                  state.overrides.draft_size_gb = d?.size_gb ?? null;
+                  // escolher um rascunho liga o speculative; "nenhum" desliga
+                  state.overrides.use_speculative = d != null;
                   refreshRecommendation();
                 },
               ),
+              ...(state.overrides.draft_path
+                ? [
+                    ctrlToggle(
+                      t("tuner.speculative", {
+                        name:
+                          state.models.find((p) => p.path === state.overrides.draft_path)
+                            ?.name ?? "",
+                      }),
+                      c.draft_model != null,
+                      (on) => {
+                        state.overrides.use_speculative = on;
+                        refreshRecommendation();
+                      },
+                    ),
+                    // janela do rascunho: quantos tokens ele propoe por passo
+                    ctrlNumber(
+                      t("tuner.draftMax"),
+                      state.overrides.draft_max,
+                      (val) => {
+                        state.overrides.draft_max = Math.min(64, Math.max(1, val || 1));
+                        refreshRecommendation();
+                      },
+                    ),
+                  ]
+                : []),
             ]
           : []),
         ctrlNumber(t("tuner.port"), state.overrides.port, (val) => {
@@ -820,7 +872,8 @@ function argsPreview(c: LlamaConfig): string {
       `"${c.draft_model}"`,
       "-ngld",
       String(c.draft_n_gpu_layers),
-      "--draft-max",
+      // mesmo nome que o server.rs passa (b9723 renomeou --draft-max)
+      "--spec-draft-n-max",
       String(c.draft_max),
     );
   a.push("--host", c.host, "--port", String(c.port));
@@ -1217,6 +1270,11 @@ async function send() {
   const t0 = performance.now();
   let acc = "";
   let thinkText = "";
+  // render de markdown com throttle: re-parsear a resposta INTEIRA a cada
+  // delta e O(n^2) — em respostas longas o re-render trava a UI no fim.
+  // Renderiza no max a cada 120ms e o texto cru entre um e outro.
+  const RENDER_INTERVAL_MS = 120;
+  let lastRender = 0;
 
   try {
     for await (const chunk of streamChat(
@@ -1234,8 +1292,12 @@ async function send() {
       }
       if (chunk.delta) {
         acc += chunk.delta;
-        renderMarkdown(a.answer, acc);
-        $("#messages").scrollTop = $("#messages").scrollHeight;
+        const now = performance.now();
+        if (now - lastRender >= RENDER_INTERVAL_MS) {
+          lastRender = now;
+          renderMarkdown(a.answer, acc);
+          $("#messages").scrollTop = $("#messages").scrollHeight;
+        }
       }
       if (chunk.usage) showCtx(chunk.usage);
       if (chunk.timings?.predicted_per_second) {
@@ -1248,10 +1310,11 @@ async function send() {
     const aborted = (e as { name?: string })?.name === "AbortError";
     if (!aborted) {
       acc += t("chat.errorInline", { e: String(e) });
-      renderMarkdown(a.answer, acc);
     }
   } finally {
     a.answer.classList.remove("streaming");
+    // render final completo (o throttle pode ter deixado texto cru no DOM)
+    renderMarkdown(a.answer, acc);
     // modelo de reasoning que so "pensou" e nao deu resposta limpa
     if (!acc.trim() && thinkText.trim()) {
       a.answer.textContent = t("chat.thoughtOnly");
@@ -1689,6 +1752,9 @@ function renderBenchForm() {
   box.append(
     h("div", { class: "muted quant-desc" }, [t("bench.selectHint")]),
     list,
+    ctrlToggle(t("bench.cpuGpu"), state.benchCpuGpu, (on) => {
+      state.benchCpuGpu = on;
+    }),
     startBtn,
   );
 }
@@ -1700,10 +1766,12 @@ async function startBench() {
     .filter((m) => state.benchSel.has(m.path))
     .map((m) => m.path);
   try {
-    await invoke("bench_start", { paths });
+    await invoke("bench_start", { paths, cpuGpu: state.benchCpuGpu });
     state.benchActive = true;
     state.benchResults = [];
-    addLog(`[bench] ${paths.length} modelo(s) na fila`);
+    addLog(
+      `[bench] ${paths.length} modelo(s) na fila${state.benchCpuGpu ? " (CPU × GPU)" : ""}`,
+    );
     renderBenchForm();
     renderBenchResults();
   } catch (e) {
@@ -1715,11 +1783,16 @@ function benchModelOf(path: string): ModelInfo | null {
   return state.models.find((m) => m.path === path) ?? null;
 }
 
-function showBenchStatus(index: number, total: number, path: string) {
+function benchVariant(ngl: number | null): string {
+  if (ngl == null) return "";
+  return ` · ${ngl === 0 ? t("bench.cpu") : t("bench.gpu")}`;
+}
+
+function showBenchStatus(index: number, total: number, path: string, ngl: number | null) {
   const s = $("#bench-status");
   if (!s) return;
   s.classList.remove("hidden");
-  const name = benchModelOf(path)?.name ?? path;
+  const name = (benchModelOf(path)?.name ?? path) + benchVariant(ngl);
   const pct = total ? ((index - 1) / total) * 100 : 0;
   s.innerHTML = "";
   s.append(
@@ -1751,7 +1824,8 @@ function renderBenchResults() {
   );
   const rows = state.benchResults.map((r) => {
     const m = benchModelOf(r.path);
-    const name = m?.name ?? r.path;
+    const variant = benchVariant(r.ngl);
+    const name = (m?.name ?? r.path) + variant;
     const size = m ? `${m.size_gb.toFixed(1)} GB` : "—";
     if (r.error) {
       return h("tr", {}, [
@@ -1898,9 +1972,13 @@ async function init() {
     },
   );
 
-  await listen<{ index: number; total: number; path: string }>(
-    "bench-progress",
-    (e) => showBenchStatus(e.payload.index, e.payload.total, e.payload.path),
+  await listen<{
+    index: number;
+    total: number;
+    path: string;
+    ngl: number | null;
+  }>("bench-progress", (e) =>
+    showBenchStatus(e.payload.index, e.payload.total, e.payload.path, e.payload.ngl),
   );
   await listen<BenchResult>("bench-result", (e) => {
     state.benchResults.push(e.payload);

@@ -80,8 +80,8 @@ fn quant_cancel(app: AppHandle) {
 // ---------- Comparador de modelos (llama-bench) ----------
 
 #[tauri::command]
-fn bench_start(app: AppHandle, paths: Vec<String>) -> Result<(), String> {
-    bench::start(&app, paths)
+fn bench_start(app: AppHandle, paths: Vec<String>, cpu_gpu: bool) -> Result<(), String> {
+    bench::start(&app, paths, cpu_gpu)
 }
 
 #[tauri::command]

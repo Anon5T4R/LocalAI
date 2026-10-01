@@ -48,12 +48,16 @@ struct BenchProgress {
     index: u32,
     total: u32,
     path: String,
+    /// Variante de offload do job: 0 = CPU, 99 = GPU total (None = default).
+    ngl: Option<u32>,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BenchResult {
     path: String,
+    /// Variante de offload do job: 0 = CPU, 99 = GPU total (None = default).
+    ngl: Option<u32>,
     pp_tps: Option<f64>,
     tg_tps: Option<f64>,
     error: Option<String>,
@@ -98,6 +102,7 @@ fn run_one(
     exe: &Path,
     bin_dir: &Path,
     model: &str,
+    ngl: Option<u32>,
 ) -> Result<(Option<f64>, Option<f64>), String> {
     // Flags enxutas: defaults do bench (pp512/tg128), 3 repeticoes em vez de 5
     // pra nao demorar demais, JSON no stdout e prioridade baixa tambem nas
@@ -110,8 +115,12 @@ fn run_one(
         .arg("-r")
         .arg("3")
         .arg("--prio")
-        .arg("-1")
-        .current_dir(bin_dir) // DLLs ggml-*/llama.dll
+        .arg("-1");
+    // A/B de offload: -ngl 0 (CPU pura) vs 99 (GPU total via Vulkan)
+    if let Some(n) = ngl {
+        cmd.arg("-ngl").arg(n.to_string());
+    }
+    cmd.current_dir(bin_dir) // DLLs ggml-*/llama.dll
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(windows)]
@@ -173,13 +182,25 @@ fn run_one(
 
 /// Inicia a fila de benchmarks em background e retorna na hora.
 /// Progresso em "bench-progress"/"bench-result"; fim em "bench-done".
-pub fn start(app: &AppHandle, paths: Vec<String>) -> Result<(), String> {
+/// Com `cpu_gpu` = true, cada modelo roda DUAS vezes: -ngl 0 (CPU pura) e
+/// -ngl 99 (GPU total) — o A/B de offload sem trocar de binario nem de app.
+pub fn start(app: &AppHandle, paths: Vec<String>, cpu_gpu: bool) -> Result<(), String> {
     if paths.is_empty() {
         return Err("Selecione ao menos um modelo para comparar.".into());
     }
     for p in &paths {
         if !PathBuf::from(p).is_file() {
             return Err(format!("Arquivo nao encontrado: {p}"));
+        }
+    }
+    // fila de jobs: (path, variante de ngl)
+    let mut jobs: Vec<(String, Option<u32>)> = Vec::new();
+    for p in paths {
+        if cpu_gpu {
+            jobs.push((p.clone(), Some(0)));
+            jobs.push((p, Some(99)));
+        } else {
+            jobs.push((p, None));
         }
     }
     if RUNNING.swap(true, Ordering::SeqCst) {
@@ -207,8 +228,8 @@ pub fn start(app: &AppHandle, paths: Vec<String>) -> Result<(), String> {
 
     let app = app.clone();
     std::thread::spawn(move || {
-        let total = paths.len() as u32;
-        for (i, path) in paths.iter().enumerate() {
+        let total = jobs.len() as u32;
+        for (i, (path, ngl)) in jobs.iter().enumerate() {
             if CANCELLED.load(Ordering::SeqCst) {
                 break;
             }
@@ -218,14 +239,16 @@ pub fn start(app: &AppHandle, paths: Vec<String>) -> Result<(), String> {
                     index: i as u32 + 1,
                     total,
                     path: path.clone(),
+                    ngl: *ngl,
                 },
             );
-            match run_one(&app, &exe, &bin_dir, path) {
+            match run_one(&app, &exe, &bin_dir, path, *ngl) {
                 Ok((pp, tg)) => {
                     let _ = app.emit(
                         "bench-result",
                         BenchResult {
                             path: path.clone(),
+                            ngl: *ngl,
                             pp_tps: pp,
                             tg_tps: tg,
                             error: None,
@@ -241,6 +264,7 @@ pub fn start(app: &AppHandle, paths: Vec<String>) -> Result<(), String> {
                         "bench-result",
                         BenchResult {
                             path: path.clone(),
+                            ngl: *ngl,
                             pp_tps: None,
                             tg_tps: None,
                             error: Some(e),

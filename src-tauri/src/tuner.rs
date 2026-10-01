@@ -46,6 +46,9 @@ pub struct TuneOverrides {
     pub use_speculative: Option<bool>,
     pub draft_path: Option<String>,
     pub draft_size_gb: Option<f64>,
+    /// Janela do rascunho (--spec-draft-n-max): tokens propostos por passo.
+    /// None = default 16.
+    pub draft_max: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -292,6 +295,10 @@ pub fn recommend(
 
     let port = ov.port.unwrap_or(8080);
 
+    // Janela do rascunho: default 16; janela menor (4-8) rende melhor com
+    // rascunho fraco ou contexto longo (mais propostas = mais rejeicao).
+    let draft_max = ov.draft_max.unwrap_or(16).clamp(1, 64);
+
     let config = LlamaConfig {
         model_path: model.path.clone(),
         model_name: model.name.clone(),
@@ -311,7 +318,7 @@ pub fn recommend(
         port,
         draft_model: if use_speculative { draft_path } else { None },
         draft_n_gpu_layers,
-        draft_max: 16,
+        draft_max,
     };
 
     Recommendation {
