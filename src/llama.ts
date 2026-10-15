@@ -12,6 +12,9 @@ export interface ChatMessage {
   content: string | ContentPart[];
   /** Pensamento capturado do modelo (so para UI/persistencia; nunca reenviado a API). */
   reasoning?: string;
+  /** Métricas da resposta (só UI/persistência; nunca reenviadas à API). */
+  tps?: number | null;
+  secs?: number | null;
 }
 
 export interface SamplingParams {

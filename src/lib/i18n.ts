@@ -61,6 +61,8 @@ const pt = {
   "models.scanning": "Procurando…",
   "models.none": "Nenhum .gguf encontrado.",
   "model.vision": "👁 visão",
+  "model.rename": "Dar apelido",
+  "model.nickPrompt": "Apelido para este modelo (vazio limpa):",
 
   // ----- Tuner -----
   "tuner.selectModel": "Selecione um modelo.",
@@ -129,6 +131,10 @@ const pt = {
   "chat.errorInline": "\n\n[erro: {e}]",
   "chat.image": "Imagem",
   "chat.describeImage": "Descreva a imagem.",
+  "chat.tpsLive": "{tps} tok/s",
+  "chat.tpsFinal": "{tps} tok/s · {secs}s · {n} tokens",
+  "chat.scrollDown": "↓ descer",
+  "chat.codeCopy": "copiar código",
 
   // ----- Contador de contexto -----
   "ctx.title": "Tokens de contexto usados",
@@ -257,6 +263,8 @@ const en: Record<MessageKey, string> = {
   "models.scanning": "Searching…",
   "models.none": "No .gguf found.",
   "model.vision": "👁 vision",
+  "model.rename": "Set nickname",
+  "model.nickPrompt": "Nickname for this model (empty clears):",
 
   "tuner.selectModel": "Select a model.",
   "tuner.controls": "Controls",
@@ -321,6 +329,10 @@ const en: Record<MessageKey, string> = {
   "chat.errorInline": "\n\n[error: {e}]",
   "chat.image": "Image",
   "chat.describeImage": "Describe the image.",
+  "chat.tpsLive": "{tps} tok/s",
+  "chat.tpsFinal": "{tps} tok/s · {secs}s · {n} tokens",
+  "chat.scrollDown": "↓ jump down",
+  "chat.codeCopy": "copy code",
 
   "ctx.title": "Context tokens used",
   "ctx.titleFull": "Context tokens used (prompt + answer)",
@@ -442,6 +454,8 @@ const es: Record<MessageKey, string> = {
   "models.scanning": "Buscando…",
   "models.none": "No se encontró ningún .gguf.",
   "model.vision": "👁 visión",
+  "model.rename": "Poner apodo",
+  "model.nickPrompt": "Apodo para este modelo (vacío borra):",
 
   "tuner.selectModel": "Selecciona un modelo.",
   "tuner.controls": "Controles",
@@ -506,6 +520,10 @@ const es: Record<MessageKey, string> = {
   "chat.errorInline": "\n\n[error: {e}]",
   "chat.image": "Imagen",
   "chat.describeImage": "Describe la imagen.",
+  "chat.tpsLive": "{tps} tok/s",
+  "chat.tpsFinal": "{tps} tok/s · {secs}s · {n} tokens",
+  "chat.scrollDown": "↓ bajar",
+  "chat.codeCopy": "copiar código",
 
   "ctx.title": "Tokens de contexto usados",
   "ctx.titleFull": "Tokens de contexto usados (prompt + respuesta)",

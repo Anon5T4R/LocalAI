@@ -213,6 +213,23 @@ const $ = <T extends HTMLElement>(sel: string) =>
   document.querySelector(sel) as T;
 
 const DIRS_KEY = "localai.dirs";
+const NICK_KEY = "localai.nicknames";
+/** stick-to-bottom do chat: só puxa pra baixo se o usuário já estava no fim */
+let stick = true;
+
+function loadNicks(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(NICK_KEY) || "{}") ?? {};
+  } catch {
+    return {};
+  }
+}
+function nickOf(m: ModelInfo): string {
+  return loadNicks()[m.path] || m.name;
+}
+function baseName(p: string): string {
+  return p.split(/[\\/]/).pop() || p;
+}
 const SAMPLING_KEY = "localai.sampling";
 const CONVS_KEY = "localai.conversations";
 const SYS_KEY = "localai.sysprompt";
@@ -227,6 +244,38 @@ function renderMarkdown(el: HTMLElement, text: string) {
   el.classList.add("md");
   el.dataset.src = text; // fonte crua para o botao copiar
   el.innerHTML = DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
+}
+
+// Botão "copiar" em cada bloco de código (leve: só no render final/histórico)
+function addCodeCopy(scope: HTMLElement) {
+  for (const pre of Array.from(scope.querySelectorAll("pre"))) {
+    if (pre.querySelector(".code-copy")) continue;
+    const code = pre.querySelector("code");
+    if (!code) continue;
+    const btn = document.createElement("button");
+    btn.className = "code-copy";
+    btn.textContent = t("chat.copy");
+    btn.title = t("chat.codeCopy");
+    btn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(code.textContent ?? "");
+        btn.textContent = t("chat.copied");
+        setTimeout(() => (btn.textContent = t("chat.copy")), 1200);
+      } catch {}
+    });
+    pre.append(btn);
+  }
+}
+
+function scrollBox(): HTMLElement | null {
+  return document.querySelector("#messages");
+}
+function scrollIfStick() {
+  const box = scrollBox();
+  if (box && stick) box.scrollTop = box.scrollHeight;
+}
+function fmtTps(v: number): string {
+  return v.toLocaleString(localeTag(), { maximumFractionDigits: 1 });
 }
 
 // ---------- Conversas (multi-chat) ----------
@@ -331,9 +380,16 @@ function renderMessages() {
     } else if (m.role === "assistant") {
       const a = addAssistantMessage();
       renderMarkdown(a.answer, contentText(m.content));
+      addCodeCopy(a.answer);
       if (m.reasoning) {
         a.thinkingWrap.style.display = "";
         a.thinking.textContent = m.reasoning;
+      }
+      if (m.tps != null) {
+        const secs = m.secs ?? 0;
+        a.meta.textContent = secs
+          ? `${fmtTps(m.tps)} tok/s · ${secs.toFixed(1)}s`
+          : t("chat.tpsLive", { tps: fmtTps(m.tps) });
       }
     }
   }
@@ -591,7 +647,34 @@ async function scan() {
         onClick: () => selectModel(m),
       },
       [
-        h("div", { class: "model-name", title: m.path }, [m.name]),
+        h("div", { class: "model-top" }, [
+          h("div", { class: "model-name", title: m.path }, [nickOf(m)]),
+          h(
+            "button",
+            {
+              class: "nick-edit",
+              title: t("model.rename"),
+              onClick: (e: Event) => {
+                e.stopPropagation();
+                const cur = loadNicks()[m.path] ?? "";
+                const v = prompt(t("model.nickPrompt"), cur);
+                if (v == null) return;
+                const nicks = loadNicks();
+                if (v.trim()) nicks[m.path] = v.trim();
+                else delete nicks[m.path];
+                try {
+                  localStorage.setItem(NICK_KEY, JSON.stringify(nicks));
+                } catch {}
+                scan();
+                if (state.selected?.path === m.path) {
+                  $("#sel-model").textContent = `${nickOf(m)}  ·  ${m.quant}`;
+                }
+              },
+            },
+            ["✎"],
+          ),
+        ]),
+        h("div", { class: "model-file", title: m.path }, [baseName(m.path)]),
         h("div", { class: "model-meta" }, [
           tag(m.quant),
           tag(`${m.size_gb.toFixed(1)} GB`),
@@ -622,7 +705,8 @@ async function selectModel(m: ModelInfo) {
         (c as HTMLElement).dataset.path === m.path,
       ),
     );
-  $("#sel-model").textContent = `${m.name}  ·  ${m.quant}`;
+  $("#sel-model").textContent = `${nickOf(m)}  ·  ${m.quant}`;
+  ($("#sel-model") as HTMLElement).title = m.path;
   // ajusta limites de contexto ao modelo
   if (m.context_length) {
     state.overrides.ctx_size = Math.min(8192, m.context_length);
@@ -1117,10 +1201,29 @@ function buildChatView() {
 
   const input = $<HTMLTextAreaElement>("#input");
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if ((e.key === "Enter" && !e.shiftKey) || (e.key === "Enter" && e.ctrlKey)) {
       e.preventDefault();
       send();
+    } else if (e.key === "Escape" && state.busy) {
+      e.preventDefault();
+      state.abort?.abort();
     }
+  });
+  // stick-to-bottom: o stream só puxa pra baixo se o usuário já estava no fim;
+  // senão mostra a pílula "descer" para voltar quando quiser.
+  const box = $<HTMLElement>("#messages");
+  const jump = h("button", { id: "scroll-jump", class: "scroll-jump hidden" }, [
+    t("chat.scrollDown"),
+  ]);
+  jump.addEventListener("click", () => {
+    stick = true;
+    box.scrollTop = box.scrollHeight;
+    jump.classList.add("hidden");
+  });
+  ($(".chat-wrap") as HTMLElement).append(jump);
+  box.addEventListener("scroll", () => {
+    stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    jump.classList.toggle("hidden", stick);
   });
   input.addEventListener("input", () => {
     input.style.height = "auto";
@@ -1216,8 +1319,21 @@ function addMessage(
     h("div", { class: "bubble" }, bubbleKids),
   ]);
   box.append(msg);
-  box.scrollTop = box.scrollHeight;
+  scrollIfStick();
   return msg.querySelector(".bubble") as HTMLElement;
+}
+
+function renderTpsLive(
+  meta: HTMLElement,
+  gen: number | null,
+  pp: number | null,
+) {
+  if (gen == null && pp == null) return;
+  const parts: string[] = [];
+  if (gen != null) parts.push(t("chat.tpsLive", { tps: fmtTps(gen) }));
+  if (pp != null)
+    parts.push(`prompt ${Math.round(pp)} tok/s`);
+  meta.textContent = parts.join(" · ");
 }
 
 async function send() {
@@ -1270,6 +1386,9 @@ async function send() {
   const t0 = performance.now();
   let acc = "";
   let thinkText = "";
+  let lastTps: number | null = null;
+  let lastTokens = 0;
+  stick = true;
   // render de markdown com throttle: re-parsear a resposta INTEIRA a cada
   // delta e O(n^2) — em respostas longas o re-render trava a UI no fim.
   // Renderiza no max a cada 120ms e o texto cru entre um e outro.
@@ -1296,12 +1415,22 @@ async function send() {
         if (now - lastRender >= RENDER_INTERVAL_MS) {
           lastRender = now;
           renderMarkdown(a.answer, acc);
-          $("#messages").scrollTop = $("#messages").scrollHeight;
+          scrollIfStick();
         }
       }
-      if (chunk.usage) showCtx(chunk.usage);
+      if (chunk.usage) {
+        showCtx(chunk.usage);
+        if (chunk.usage.completion_tokens != null)
+          lastTokens = chunk.usage.completion_tokens;
+      }
       if (chunk.timings?.predicted_per_second) {
         showHud(chunk.timings);
+        lastTps = chunk.timings.predicted_per_second;
+        renderTpsLive(
+          a.meta,
+          chunk.timings.predicted_per_second,
+          chunk.timings.prompt_per_second ?? null,
+        );
       }
       if (chunk.done) break;
     }
@@ -1315,22 +1444,34 @@ async function send() {
     a.answer.classList.remove("streaming");
     // render final completo (o throttle pode ter deixado texto cru no DOM)
     renderMarkdown(a.answer, acc);
+    addCodeCopy(a.answer);
+    scrollIfStick();
     // modelo de reasoning que so "pensou" e nao deu resposta limpa
     if (!acc.trim() && thinkText.trim()) {
       a.answer.textContent = t("chat.thoughtOnly");
       a.answer.classList.add("muted");
+    }
+    const secs = (performance.now() - t0) / 1000;
+    if (lastTps != null) {
+      a.meta.textContent = t("chat.tpsFinal", {
+        tps: fmtTps(lastTps),
+        secs: secs.toFixed(1),
+        n: lastTokens || acc.length,
+      });
+    } else {
+      a.meta.textContent = `${secs.toFixed(1)}s`;
     }
     conv.messages.push({
       role: "assistant",
       content: acc,
       // pensamento fica salvo para reabrir a conversa; nunca volta pra API
       ...(thinkText.trim() ? { reasoning: thinkText } : {}),
+      ...(lastTps != null ? { tps: lastTps, secs } : {}),
     });
     saveConvs();
     state.busy = false;
     state.abort = null;
     $("#send").textContent = t("btn.send");
-    const secs = (performance.now() - t0) / 1000;
     if (!$("#hud").textContent) {
       $("#hud").textContent = `${secs.toFixed(1)}s`;
     }
@@ -1350,6 +1491,7 @@ function addAssistantMessage() {
   );
   (thinkingWrap as HTMLElement).style.display = "none";
   const answer = h("div", { class: "bubble" }, []);
+  const meta = h("div", { class: "meta-line" }, ["—"]);
   const copyBtn = h(
     "button",
     {
@@ -1370,10 +1512,11 @@ function addAssistantMessage() {
     h("div", { class: "role" }, [t("role.assistant") + " ", copyBtn]),
     thinkingWrap,
     answer,
+    meta,
   ]);
   box.append(msg);
-  box.scrollTop = box.scrollHeight;
-  return { answer, thinking, thinkingWrap: thinkingWrap as HTMLElement };
+  scrollIfStick();
+  return { answer, thinking, thinkingWrap: thinkingWrap as HTMLElement, meta };
 }
 
 function showHud(t: {
