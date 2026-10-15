@@ -132,6 +132,8 @@ const state = {
   rec: null as Recommendation | null,
   overrides: {
     ctx_size: 8192,
+    threads: null as number | null,
+    threads_batch: null as number | null,
     gpu_offload: null as boolean | null, // null = auto (backend decide)
     n_gpu_layers: null as number | null, // null = total quando offload ligado
     kv_quant: false,
@@ -175,6 +177,9 @@ const state = {
   benchSel: new Set<string>(),
   benchActive: false,
   benchResults: [] as BenchResult[],
+  /** prompts salvos + filtro da lista de modelos */
+  prompts: loadPrompts(),
+  modelFilter: "",
   /** A/B de offload: cada modelo roda 2x (-ngl 0 CPU pura / -ngl 99 GPU) */
   benchCpuGpu: false,
 };
@@ -214,6 +219,23 @@ const $ = <T extends HTMLElement>(sel: string) =>
 
 const DIRS_KEY = "localai.dirs";
 const NICK_KEY = "localai.nicknames";
+const PROMPTS_KEY = "localai.prompts";
+const SIDEBAR_KEY = "localai.sidebar"; // "0" = recolhida, ausente/"1" = aberta
+
+interface SavedPrompt {
+  id: string;
+  title: string;
+  text: string;
+}
+
+function loadPrompts(): SavedPrompt[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(PROMPTS_KEY) || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
 /** stick-to-bottom do chat: só puxa pra baixo se o usuário já estava no fim */
 let stick = true;
 
@@ -419,10 +441,30 @@ function buildShell() {
           h("span", {}, [t("sidebar.models")]),
           h("button", { class: "mini", id: "rescan" }, ["⟳"]),
         ]),
+        h("input", {
+          id: "model-filter",
+          class: "model-filter",
+          placeholder: t("sidebar.filter"),
+          onInput: (e: Event) => {
+            state.modelFilter = (
+              e.target as HTMLInputElement
+            ).value.toLowerCase();
+            renderModelList();
+          },
+        }),
         h("div", { id: "models", class: "models" }, ["—"]),
       ]),
       h("main", { class: "main" }, [
         h("header", { class: "topbar" }, [
+          h(
+            "button",
+            {
+              id: "side-toggle",
+              class: "mini",
+              title: t("sidebar.collapse"),
+            },
+            ["☰"],
+          ),
           h("div", { id: "sel-model", class: "sel-model" }, [
             t("topbar.noModel"),
           ]),
@@ -461,6 +503,18 @@ function buildShell() {
   $("#add-dir").addEventListener("click", addDir);
   $("#rescan").addEventListener("click", () => scan());
   $("#load-btn").addEventListener("click", toggleServer);
+  $("#side-toggle").addEventListener("click", () => {
+    const layout = document.querySelector(".layout") as HTMLElement;
+    const collapsed = layout.classList.toggle("collapsed");
+    try {
+      localStorage.setItem(SIDEBAR_KEY, collapsed ? "0" : "1");
+    } catch {}
+  });
+  try {
+    if (localStorage.getItem(SIDEBAR_KEY) === "0") {
+      document.querySelector(".layout")?.classList.add("collapsed");
+    }
+  } catch {}
   document.querySelectorAll(".tab").forEach((t) =>
     t.addEventListener("click", () =>
       switchView((t as HTMLElement).dataset.view!),
@@ -634,9 +688,29 @@ async function scan() {
   box.append(h("div", { class: "muted" }, [t("models.scanning")]));
   const models = await invoke<ModelInfo[]>("scan_models", { dirs: state.dirs });
   state.models = models;
+  renderModelList();
+  renderQuantForm(); // a lista de origens da aba Quantizar acompanha o scan
+  renderBenchForm(); // idem para a lista de modelos do comparador
+}
+function renderModelList() {
+  const box = $("#models");
+  if (!box) return;
   box.innerHTML = "";
+  const q = state.modelFilter.trim();
+  const models = q
+    ? state.models.filter(
+        (m) =>
+          nickOf(m).toLowerCase().includes(q) ||
+          m.path.toLowerCase().includes(q) ||
+          m.quant.toLowerCase().includes(q),
+      )
+    : state.models;
   if (!models.length) {
-    box.append(h("div", { class: "muted" }, [t("models.none")]));
+    box.append(
+      h("div", { class: "muted" }, [
+        state.models.length ? t("sidebar.filterNone") : t("models.none"),
+      ]),
+    );
     return;
   }
   for (const m of models) {
@@ -665,7 +739,7 @@ async function scan() {
                 try {
                   localStorage.setItem(NICK_KEY, JSON.stringify(nicks));
                 } catch {}
-                scan();
+                renderModelList();
                 if (state.selected?.path === m.path) {
                   $("#sel-model").textContent = `${nickOf(m)}  ·  ${m.quant}`;
                 }
@@ -686,8 +760,6 @@ async function scan() {
     card.dataset.path = m.path;
     box.append(card);
   }
-  renderQuantForm(); // a lista de origens da aba Quantizar acompanha o scan
-  renderBenchForm(); // idem para a lista de modelos do comparador
 }
 function tag(t: string) {
   return h("span", { class: "tag" }, [t]);
@@ -714,6 +786,8 @@ async function selectModel(m: ModelInfo) {
   // reseta offload para "auto": o backend decide por modelo (cabe na iGPU?)
   state.overrides.gpu_offload = null;
   state.overrides.n_gpu_layers = null;
+  state.overrides.threads = null; // threads voltam ao detectado a cada modelo
+  state.overrides.threads_batch = null;
   state.overrides.use_mmproj = false; // visao sempre comeca desligada
   // detecta um modelo-rascunho (mesma familia, bem menor) p/ speculative
   state.draftCandidate = findDraft(m);
@@ -741,6 +815,54 @@ function findDraft(target: ModelInfo): ModelInfo | null {
     listDrafts(target).find((m) => m.size_gb < target.size_gb * 0.4 && m.size_gb < 2.0) ??
     null
   );
+}
+
+// Familias de tokenizer: o speculative EXIGE o mesmo vocab, e modelos da
+// mesma familia (ex.: qwen35 denso servindo de rascunho p/ qwen35moe)
+// costumam compartilhar. Tier 2 = experimental: o servidor pode recusar.
+const ARCH_FAMILY: Record<string, string> = {
+  qwen35: "qwen3.5",
+  qwen35moe: "qwen3.5",
+};
+function familyOf(arch: string): string {
+  return ARCH_FAMILY[arch] ?? arch;
+}
+
+/** Mesma familia, outra arquitetura: sugestao experimental p/ rascunho. */
+function listFamilyDrafts(target: ModelInfo): ModelInfo[] {
+  const fam = familyOf(target.arch);
+  if (fam === target.arch) return [];
+  const candidates = state.models.filter(
+    (m) =>
+      m.path !== target.path &&
+      m.arch !== target.arch &&
+      familyOf(m.arch) === fam &&
+      m.size_gb < target.size_gb,
+  );
+  candidates.sort((a, b) => a.size_gb - b.size_gb);
+  return candidates;
+}
+
+/** Veredito do rascunho pela razao de tamanho (regra pratica). */
+function draftVerdict(target: ModelInfo, d: ModelInfo): string {
+  const r = d.size_gb / target.size_gb;
+  const key =
+    r <= 0.25 ? "tuner.draftIdeal" : r <= 0.45 ? "tuner.draftGood" : r <= 0.7 ? "tuner.draftOk" : "tuner.draftWeak";
+  return `${Math.round(r * 100)}% ${t(key as MessageKey)}`;
+}
+function draftLabel(target: ModelInfo, d: ModelInfo): string {
+  return `${nickOf(d)} · ${d.quant} · ${draftVerdict(target, d)}`;
+}
+
+// Debounce do auto-tuner: cada tick de slider/input reagenda (250ms) em vez
+// de enfileirar um IPC do backend por evento — mesma resposta, menos trabalho.
+let recTimer: number | null = null;
+function scheduleRefresh() {
+  if (recTimer != null) clearTimeout(recTimer);
+  recTimer = window.setTimeout(() => {
+    recTimer = null;
+    scheduleRefresh();
+  }, 250);
 }
 
 async function refreshRecommendation() {
@@ -782,7 +904,7 @@ function renderTuner() {
           String(state.overrides.ctx_size),
           (val) => {
             state.overrides.ctx_size = parseInt(val);
-            refreshRecommendation();
+            scheduleRefresh();
           },
         ),
         ctrlToggle(
@@ -792,7 +914,7 @@ function renderTuner() {
           (on) => {
             state.overrides.gpu_offload = on;
             state.overrides.n_gpu_layers = null; // total quando ligado
-            refreshRecommendation();
+            scheduleRefresh();
           },
         ),
         ...(c.n_gpu_layers > 0
@@ -808,7 +930,7 @@ function renderTuner() {
                 (val) => {
                   state.overrides.n_gpu_layers = val;
                   state.overrides.gpu_offload = val > 0;
-                  refreshRecommendation();
+                  scheduleRefresh();
                 },
               ),
             ]
@@ -818,7 +940,27 @@ function renderTuner() {
           state.overrides.kv_quant,
           (on) => {
             state.overrides.kv_quant = on;
-            refreshRecommendation();
+            scheduleRefresh();
+          },
+        ),
+        ctrlRange(
+          t("tuner.threadsGen", { n: c.threads }),
+          1,
+          Math.max(1, state.hw?.logical_cores ?? 8),
+          c.threads,
+          (val) => {
+            state.overrides.threads = val;
+            scheduleRefresh();
+          },
+        ),
+        ctrlRange(
+          t("tuner.threadsBatch", { n: c.threads_batch }),
+          1,
+          Math.max(1, state.hw?.logical_cores ?? 8),
+          c.threads_batch,
+          (val) => {
+            state.overrides.threads_batch = val;
+            scheduleRefresh();
           },
         ),
         ...(m.has_mmproj
@@ -828,37 +970,69 @@ function renderTuner() {
                 state.overrides.use_mmproj,
                 (on) => {
                   state.overrides.use_mmproj = on;
-                  refreshRecommendation();
+                  scheduleRefresh();
                 },
               ),
             ]
           : []),
-        ...(listDrafts(m).length
+        ...(listDrafts(m).length || listFamilyDrafts(m).length
           ? [
-              // seletor manual do rascunho (speculative): lista todos os
-              // candidatos da mesma arquitetura menores que o alvo
-              ctrlSelect(
-                t("tuner.draftModel"),
-                [
-                  ["", t("tuner.draftNone")],
-                  ...listDrafts(m).map(
-                    (d) =>
+              // Rascunho sem config: qualquer modelo menor ja escaneado serve,
+              // sem arquivo auxiliar. Tier 1 = mesma arquitetura (garantido);
+              // tier 2 = mesma familia, outra arquitetura (experimental: o
+              // servidor pode recusar se o vocab divergir).
+              h("div", { class: "muted quant-desc" }, [t("tuner.draftHint")]),
+              ...(listDrafts(m).length
+                ? [
+                    ctrlSelect(
+                      t("tuner.draftModel"),
                       [
-                        d.path,
-                        `${d.name} · ${d.quant} · ${d.size_gb.toFixed(1)} GB`,
-                      ] as [string, string],
-                  ),
-                ],
-                state.overrides.draft_path ?? "",
-                (val) => {
-                  const d = state.models.find((m) => m.path === val) ?? null;
-                  state.overrides.draft_path = d?.path ?? null;
-                  state.overrides.draft_size_gb = d?.size_gb ?? null;
-                  // escolher um rascunho liga o speculative; "nenhum" desliga
-                  state.overrides.use_speculative = d != null;
-                  refreshRecommendation();
-                },
-              ),
+                        ["", t("tuner.draftNone")],
+                        ...listDrafts(m).map(
+                          (d) => [d.path, draftLabel(m, d)] as [string, string],
+                        ),
+                      ],
+                      listDrafts(m).some(
+                        (d) => d.path === state.overrides.draft_path,
+                      )
+                        ? (state.overrides.draft_path ?? "")
+                        : "",
+                      (val) => {
+                        const d = state.models.find((m) => m.path === val) ?? null;
+                        state.overrides.draft_path = d?.path ?? null;
+                        state.overrides.draft_size_gb = d?.size_gb ?? null;
+                        // escolher um rascunho liga o speculative; "nenhum" desliga
+                        state.overrides.use_speculative = d != null;
+                        scheduleRefresh();
+                      },
+                    ),
+                  ]
+                : []),
+              ...(listFamilyDrafts(m).length
+                ? [
+                    ctrlSelect(
+                      t("tuner.draftFamily"),
+                      [
+                        ["", t("tuner.draftNone")],
+                        ...listFamilyDrafts(m).map(
+                          (d) => [d.path, draftLabel(m, d)] as [string, string],
+                        ),
+                      ],
+                      listFamilyDrafts(m).some(
+                        (d) => d.path === state.overrides.draft_path,
+                      )
+                        ? (state.overrides.draft_path ?? "")
+                        : "",
+                      (val) => {
+                        const d = state.models.find((m) => m.path === val) ?? null;
+                        state.overrides.draft_path = d?.path ?? null;
+                        state.overrides.draft_size_gb = d?.size_gb ?? null;
+                        state.overrides.use_speculative = d != null;
+                        scheduleRefresh();
+                      },
+                    ),
+                  ]
+                : []),
               ...(state.overrides.draft_path
                 ? [
                     ctrlToggle(
@@ -870,7 +1044,7 @@ function renderTuner() {
                       c.draft_model != null,
                       (on) => {
                         state.overrides.use_speculative = on;
-                        refreshRecommendation();
+                        scheduleRefresh();
                       },
                     ),
                     // janela do rascunho: quantos tokens ele propoe por passo
@@ -879,7 +1053,7 @@ function renderTuner() {
                       state.overrides.draft_max,
                       (val) => {
                         state.overrides.draft_max = Math.min(64, Math.max(1, val || 1));
-                        refreshRecommendation();
+                        scheduleRefresh();
                       },
                     ),
                   ]
@@ -888,7 +1062,7 @@ function renderTuner() {
           : []),
         ctrlNumber(t("tuner.port"), state.overrides.port, (val) => {
           state.overrides.port = val;
-          refreshRecommendation();
+          scheduleRefresh();
         }),
       ]),
       // Resumo + RAM
@@ -1120,6 +1294,15 @@ function buildChatView() {
       h("div", { class: "conv-bar" }, [
         h("button", { id: "new-chat", class: "mini" }, [t("chat.newChat")]),
         h("div", { id: "conv-list", class: "conv-list" }, []),
+        h(
+          "button",
+          {
+            id: "export-chat",
+            class: "mini",
+            title: t("chat.export"),
+          },
+          ["⤓"],
+        ),
       ]),
       h("div", { id: "messages", class: "messages" }, [
         h("div", { class: "empty" }, [t("chat.empty")]),
@@ -1159,7 +1342,17 @@ function buildChatView() {
         ]),
       ]),
       h("div", { id: "img-preview", class: "img-preview hidden" }, []),
+      h("div", { id: "prompts-panel", class: "prompts-panel hidden" }, []),
       h("div", { class: "composer" }, [
+        h(
+          "button",
+          {
+            id: "prompts-btn",
+            class: "mini attach",
+            title: t("prompts.title"),
+          },
+          ["★"],
+        ),
         h(
           "button",
           {
@@ -1237,6 +1430,100 @@ function buildChatView() {
     renderMessages();
     $<HTMLTextAreaElement>("#input")?.focus();
   });
+  $("#export-chat").addEventListener("click", exportChat);
+  $("#prompts-btn").addEventListener("click", () => {
+    const p = $("#prompts-panel");
+    p.classList.toggle("hidden");
+    if (!p.classList.contains("hidden")) renderPrompts();
+  });
+}
+
+// ---------- Prompts salvos (persistem em localStorage) ----------
+function savePrompts() {
+  try {
+    localStorage.setItem(PROMPTS_KEY, JSON.stringify(state.prompts));
+  } catch {}
+}
+function renderPrompts() {
+  const box = $("#prompts-panel");
+  box.innerHTML = "";
+  box.append(h("h4", {}, [t("prompts.title")]));
+  if (!state.prompts.length) {
+    box.append(h("div", { class: "muted" }, [t("prompts.empty")]));
+  }
+  for (const p of state.prompts) {
+    box.append(
+      h("div", { class: "prompt-row" }, [
+        h(
+          "span",
+          {
+            class: "prompt-title",
+            title: `${p.title}\n—\n${p.text}`,
+            onClick: () => {
+              const input = $<HTMLTextAreaElement>("#input");
+              input.value = p.text;
+              input.focus();
+              box.classList.add("hidden");
+            },
+          },
+          [p.title],
+        ),
+        h(
+          "button",
+          {
+            class: "x",
+            title: t("prompts.delete"),
+            onClick: () => {
+              state.prompts = state.prompts.filter((x) => x.id !== p.id);
+              savePrompts();
+              renderPrompts();
+            },
+          },
+          ["×"],
+        ),
+      ]),
+    );
+  }
+  box.append(
+    h(
+      "button",
+      {
+        class: "mini",
+        style: "margin-top:8px",
+        onClick: () => {
+          const input = $<HTMLTextAreaElement>("#input");
+          const text = input.value.trim();
+          if (!text) return;
+          const title = prompt(t("prompts.name"), text.slice(0, 40));
+          if (!title) return;
+          state.prompts.unshift({
+            id: crypto.randomUUID?.() ?? String(Date.now()),
+            title: title.trim(),
+            text,
+          });
+          savePrompts();
+          renderPrompts();
+        },
+      },
+      [t("prompts.save")],
+    ),
+  );
+}
+
+// ---------- Exportar conversa ativa como .md ----------
+function exportChat() {
+  const conv = activeConv();
+  const lines: string[] = [`# ${conv.title || t("conv.newChat")}`, ""];
+  for (const m of conv.messages) {
+    const who = m.role === "user" ? t("role.you") : t("role.assistant");
+    lines.push(`## ${who}`, "", contentText(m.content), "");
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `chat-${conv.id.slice(0, 8)}.md`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
 function renderImgPreview() {

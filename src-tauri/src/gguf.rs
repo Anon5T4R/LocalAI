@@ -276,9 +276,11 @@ pub struct ParsedGguf {
 // que o enum file_type), com fallback para file_type.
 fn quant_from_name(fname: &str, file_type: Option<u32>) -> String {
     let upper = fname.to_uppercase();
-    const PATTERNS: [&str; 18] = [
-        "Q8_0", "Q6_K", "Q5_K_M", "Q5_K_S", "Q5_0", "Q5_1", "Q4_K_M", "Q4_K_S", "Q4_0", "Q4_1",
-        "Q3_K_L", "Q3_K_M", "Q3_K_S", "Q2_K", "IQ4_XS", "IQ3_XS", "BF16", "F16",
+    const PATTERNS: [&str; 28] = [
+        "Q8_K_XL", "Q8_0", "Q6_K_XL", "Q6_K_L", "Q6_K", "Q5_K_XL", "Q5_K_M", "Q5_K_S", "Q5_0", "Q5_1",
+        "Q4_K_XL", "Q4_K_M", "Q4_K_S", "Q4_0", "Q4_1",
+        "Q3_K_L", "Q3_K_M", "Q3_K_S", "Q2_K", "IQ4_XS", "IQ4_NL", "IQ3_XS", "IQ2_XXS", "IQ2_XS",
+        "IQ2_S", "IQ1_M", "BF16", "F16",
     ];
     for p in PATTERNS {
         if upper.contains(p) {

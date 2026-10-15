@@ -149,6 +149,35 @@ button {
   grid-template-columns: 320px 1fr;
   height: 100vh;
 }
+.layout.collapsed {
+  grid-template-columns: 0 1fr;
+}
+.layout.collapsed .sidebar {
+  display: none;
+}
+/* Contenção de seleção: Ctrl+A / arrastar dentro da resposta não vaza
+   para a sidebar ou o resto do app (Chromium suporta `contain`). */
+.bubble,
+.thinking-body,
+.cmd,
+.logs,
+.hub-file {
+  user-select: contain;
+}
+.model-filter {
+  width: 100%;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 12px;
+}
+.model-filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 
 /* ---------- Sidebar ---------- */
 .sidebar {
@@ -794,6 +823,47 @@ button {
   padding: 12px 16px;
   border-top: 1px solid var(--border);
   align-items: flex-end;
+}
+/* Painel de prompts salvos (popover acima do composer) */
+.prompts-panel {
+  position: absolute;
+  left: 16px;
+  bottom: 76px;
+  z-index: 6;
+  width: min(420px, 90%);
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  padding: 10px;
+}
+.prompts-panel h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.prompt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.prompt-row:last-child {
+  border-bottom: none;
+}
+.prompt-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.prompt-title:hover {
+  color: var(--accent);
 }
 #input {
   flex: 1;

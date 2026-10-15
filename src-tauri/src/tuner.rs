@@ -36,6 +36,8 @@ pub struct LlamaConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TuneOverrides {
     pub ctx_size: Option<u32>,
+    pub threads: Option<usize>,
+    pub threads_batch: Option<usize>,
     pub gpu_offload: Option<bool>,
     pub n_gpu_layers: Option<u32>,
     pub kv_quant: Option<bool>,
@@ -100,12 +102,20 @@ pub fn recommend(
     let mut warnings: Vec<String> = Vec::new();
 
     // --- Threads ---
-    let threads = hw.recommended_gen_threads;
-    let threads_batch = hw.recommended_batch_threads;
+    let threads = ov.threads.unwrap_or(hw.recommended_gen_threads).max(1);
+    let threads_batch = ov
+        .threads_batch
+        .unwrap_or(hw.recommended_batch_threads)
+        .max(1);
     rationale.push(format!(
         "Threads de geracao = {} (nucleos fisicos). Em geracao o gargalo e a banda de memoria; usar os {} threads logicos (SMT) normalmente piora por contencao.",
         threads, hw.logical_cores
     ));
+    if ov.threads.is_some() || ov.threads_batch.is_some() {
+        rationale.push(
+            "Threads manuais (sua escolha no painel). Se o tok/s cair, volte aos detectados.".to_string(),
+        );
+    }
     rationale.push(format!(
         "Threads de prompt (batch) = {} (todos os logicos). Processar o prompt e compute-bound e escala com mais threads.",
         threads_batch
