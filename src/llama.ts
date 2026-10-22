@@ -7,14 +7,53 @@ export type ContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } };
 
+/** Contexto RAG injetado na mensagem do usuário (só UI/persistência; a API
+ *  recebe o `context` já embutido no content — ver send() no main.ts). */
+export interface RagPayload {
+  context: string;
+  sources: Array<{
+    name: string;
+    page: number | null;
+    text: string;
+    full: boolean;
+  }>;
+}
+
+/** Definição de ferramenta exposta ao modelo (formato OpenAI tools). */
+export interface ToolDef {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    /** JSON Schema dos parâmetros. */
+    parameters: Record<string, unknown>;
+  };
+}
+
+/** Chamada de ferramenta agregada dos deltas do stream. `arguments` é a
+ *  string JSON crua que o modelo produziu (parse é do consumidor). */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 export interface ChatMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string | ContentPart[];
   /** Pensamento capturado do modelo (so para UI/persistencia; nunca reenviado a API). */
   reasoning?: string;
   /** Métricas da resposta (só UI/persistência; nunca reenviadas à API). */
   tps?: number | null;
   secs?: number | null;
+  /** Documentos consultados nesta pergunta (só UI/persistência). */
+  rag?: RagPayload;
+  /** Assistant: ferramentas que o modelo pediu para executar. */
+  tool_calls?: ToolCall[];
+  /** Resposta de ferramenta (role "tool"): a qual chamada pertence. */
+  tool_call_id?: string;
+  /** Resposta de ferramenta: caminho salvo, quando houver (só UI). */
+  savedPath?: string;
 }
 
 export interface SamplingParams {
@@ -48,6 +87,8 @@ export interface StreamChunk {
   usage?: Usage;
   /** aviso de diagnostico para a aba Logs (ex.: fallback de <think> ativado) */
   note?: string;
+  /** chamadas de ferramenta agregadas (emitido UMA vez, antes do done) */
+  toolCalls?: ToolCall[];
   done?: boolean;
 }
 
@@ -160,16 +201,65 @@ export class ThinkFilter {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Agregação de tool calls: a API OpenAI-streaming entrega as chamadas de
+// ferramenta em DELTAS (index + id/name/arguments em pedaços). Esta classe
+// junta por index e devolve a lista completa no fim do stream. Exportada
+// apenas para os testes (o streamChat é o único consumidor real).
+// ---------------------------------------------------------------------------
+export class ToolCallAggregator {
+  private slots = new Map<number, { id: string; name: string; args: string }>();
+
+  /** Delta cru de `choices[0].delta.tool_calls` (formato OpenAI). */
+  feed(
+    tcs: Array<{
+      index: number;
+      id?: string;
+      function?: { name?: string; arguments?: string };
+    }>,
+  ) {
+    for (const tc of tcs) {
+      const slot = this.slots.get(tc.index) ?? { id: "", name: "", args: "" };
+      if (tc.id) slot.id = tc.id;
+      if (tc.function?.name) slot.name = tc.function.name;
+      if (tc.function?.arguments) slot.args += tc.function.arguments;
+      this.slots.set(tc.index, slot);
+    }
+  }
+
+  /** Lista agregada, ordenada por index; chamadas sem nome são descartadas. */
+  drain(): ToolCall[] {
+    return [...this.slots.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, v]) => ({ id: v.id, name: v.name, arguments: v.args }))
+      .filter((tc) => tc.name);
+  }
+}
+
 export async function* streamChat(
   port: number,
   messages: ChatMessage[],
   params: SamplingParams,
   signal: AbortSignal,
   think: boolean = false,
+  tools?: ToolDef[],
 ): AsyncGenerator<StreamChunk> {
-  // reasoning capturado e so para UI/persistencia — nao vai para a API
-  const apiMessages: Array<{ role: string; content: string | ContentPart[] }> =
-    messages.map(({ role, content }) => ({ role, content }));
+  // reasoning capturado e so para UI/persistencia — nao vai para a API.
+  // tool_calls/tool_call_id SÃO protocolo (o loop de tools depende deles).
+  const apiMessages: Array<Record<string, unknown>> = messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+    ...(m.tool_calls
+      ? {
+          tool_calls: m.tool_calls.map((tc) => ({
+            id: tc.id,
+            type: "function",
+            function: { name: tc.name, arguments: tc.arguments },
+          })),
+        }
+      : {}),
+    ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+  }));
 
   // NO-THINK MECANICO (fallback que NAO depende do modelo respeitar flag algum):
   // quando o pensamento esta desligado, faz PREFILL do turno do assistant com um
@@ -179,7 +269,9 @@ export async function* streamChat(
   // pensamento. Funciona onde --reasoning off / reasoning_budget sao ignorados
   // (finetunes Qwen3.5/3.6 com template proprio). O bloco fica no PROMPT, nao no
   // texto gerado, entao a resposta sai limpa.
-  if (!think) {
+  // COM TOOLS ATIVAS o prefill e PULADO: um turno assistant "ja respondido"
+  // em texto desestimula o modelo de emitir tool_calls no turno dele.
+  if (!think && !tools) {
     apiMessages.push({ role: "assistant", content: "<think>\n\n</think>\n\n" });
   }
 
@@ -195,6 +287,7 @@ export async function* streamChat(
     min_p: params.min_p,
     repeat_penalty: params.repeat_penalty,
     max_tokens: params.max_tokens,
+    ...(tools ? { tools, tool_choice: "auto" } : {}),
     // O no-think REAL vem do prefill acima. `reasoning_budget` fica so como
     // reforco para modelos que ainda o respeitam (0 = resposta direta, -1 =
     // livre). NAO enviamos `chat_template_kwargs.enable_thinking`: deprecado nos

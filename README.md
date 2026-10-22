@@ -20,6 +20,20 @@ Recursos:
   que captura `<think>` cru de modelos cujo template ignora o controle
   (finetunes de Gemma/Qwen).
 - **Visão (mmproj)**: anexe imagens no chat para modelos multimodais.
+- **PDF no chat (RAG local)**: anexe PDFs e pergunte sobre eles. O texto é
+  extraído por página, indexado localmente (SQLite FTS5/BM25) e os trechos
+  relevantes entram no contexto de forma **transparente** — o painel "Fontes"
+  mostra exatamente o que foi usado. Documento que cabe no contexto entra
+  inteiro (sem retrieval). PDF escaneado passa pelo **OCR nativo do Windows**
+  (sem download extra).
+- **Busca semântica opcional (embeddings)**: com um GGUF de embedding, a busca
+  combina palavras (BM25) e significado com fusão de rankings (RRF). Toggle
+  liga/desliga; desligado, fica só a busca por palavras.
+- **Ferramentas (tool calls)**: o modelo pode criar documentos de verdade —
+  **Word (.docx)**, página HTML, Markdown e TXT — numa pasta que você escolhe,
+  e consultar os trechos dos PDFs anexados. O modelo escreve markdown; a
+  conversão é do app (funciona bem até em modelos pequenos). Requer o template
+  jinja (ligado por padrão nos Ajustes).
 - **Baixar modelos** direto do Hugging Face (busca, lista de GGUFs por quant,
   progresso e cancelamento).
 

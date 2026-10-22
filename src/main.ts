@@ -8,9 +8,20 @@ import {
   contentText,
   type ChatMessage,
   type ContentPart,
+  type RagPayload,
   type SamplingParams,
+  type ToolCall,
+  type ToolDef,
   type Usage,
 } from "./llama";
+import {
+  buildRagContext,
+  decideStrategy,
+  formatSearchReply,
+  type ConvDoc,
+  type RagChunk,
+  type RagSource,
+} from "./rag";
 import {
   t,
   localeTag,
@@ -69,6 +80,10 @@ interface ModelInfo {
   size_label: string | null;
   has_mmproj: boolean;
   mmproj_path: string | null;
+  /** O chat template do GGUF sabe desenhar tool calls? */
+  tools_ok: boolean;
+  /** Parece um modelo de embedding (busca semantica)? */
+  is_embedding: boolean;
 }
 interface LlamaConfig {
   model_path: string;
@@ -90,6 +105,8 @@ interface LlamaConfig {
   draft_model: string | null;
   draft_n_gpu_layers: number;
   draft_max: number;
+  /** Template jinja do GGUF (--jinja): necessário para tool calls. */
+  jinja: boolean;
 }
 interface Recommendation {
   config: LlamaConfig;
@@ -143,6 +160,7 @@ const state = {
     draft_path: null as string | null,
     draft_size_gb: null as number | null,
     draft_max: 16, // janela do rascunho (--spec-draft-n-max)
+    jinja: true, // template do GGUF (--jinja): tools + fidelidade ao modelo
   },
   draftCandidate: null as ModelInfo | null,
   ready: false,
@@ -161,6 +179,14 @@ const state = {
   } as SamplingParams,
   systemPrompt: "", // carregado do localStorage no init
   think: false, // opt-in: reasoning desligado por padrao (reasoning_budget=0)
+  /** ferramentas do modelo (criar arquivos): default ligado */
+  toolsEnabled: true,
+  /** pasta onde as ferramentas salvam documentos ("" = resolve no 1º uso) */
+  saveDir: "",
+  /** busca semantica ligada (embeddings) - OFF cai para BM25 puro */
+  embeddings: false,
+  /** GGUF de embedding escolhido (vazio = nenhum) */
+  embedModel: "",
   abort: null as AbortController | null,
   /** imagem pendente do composer (data-URL) para modelos com visao */
   pendingImage: null as string | null,
@@ -256,10 +282,18 @@ const SAMPLING_KEY = "localai.sampling";
 const CONVS_KEY = "localai.conversations";
 const SYS_KEY = "localai.sysprompt";
 const THINK_KEY = "localai.think";
+const JINJA_KEY = "localai.jinja";
+const TOOLS_KEY = "localai.tools";
+const SAVE_DIR_KEY = "localai.saveDir";
+const EMBED_KEY = "localai.embeddings";
+const EMBED_MODEL_KEY = "localai.embedModel";
 
 // preferencias persistidas (o system prompt sumia a cada restart)
 state.systemPrompt = localStorage.getItem(SYS_KEY) ?? "";
 state.think = localStorage.getItem(THINK_KEY) === "1";
+state.overrides.jinja = localStorage.getItem(JINJA_KEY) !== "0"; // default ON
+state.toolsEnabled = localStorage.getItem(TOOLS_KEY) !== "0"; // default ON
+state.saveDir = localStorage.getItem(SAVE_DIR_KEY) ?? ""; // "" = resolve no 1º uso
 
 // ---------- Markdown ----------
 function renderMarkdown(el: HTMLElement, text: string) {
@@ -305,6 +339,8 @@ interface Conversation {
   id: string;
   title: string;
   messages: ChatMessage[];
+  /** PDFs anexados à conversa (o texto vive no rag.db do backend). */
+  docs?: ConvDoc[];
 }
 
 function activeConv(): Conversation {
@@ -336,6 +372,7 @@ function switchConv(id: string) {
   state.activeConvId = id;
   renderConvBar();
   renderMessages();
+  renderDocBar();
 }
 function deleteConv(id: string) {
   if (state.busy) return;
@@ -344,9 +381,12 @@ function deleteConv(id: string) {
   if (!state.conversations.some((c) => c.id === state.activeConvId)) {
     state.activeConvId = state.conversations[0].id;
   }
+  // limpa os chunks do RAG da conversa apagada (higiene do rag.db)
+  invoke("rag_remove_conv", { convId: id }).catch(() => {});
   saveConvs();
   renderConvBar();
   renderMessages();
+  renderDocBar();
 }
 function renderConvBar() {
   const box = $("#conv-list");
@@ -398,7 +438,7 @@ function renderMessages() {
                   p.type === "image_url",
               )
               .map((p) => p.image_url.url);
-      addMessage("user", contentText(m.content), imgs);
+      addMessage("user", contentText(m.content), imgs, m.rag);
     } else if (m.role === "assistant") {
       const a = addAssistantMessage();
       renderMarkdown(a.answer, contentText(m.content));
@@ -413,6 +453,24 @@ function renderMessages() {
           ? `${fmtTps(m.tps)} tok/s · ${secs.toFixed(1)}s`
           : t("chat.tpsLive", { tps: fmtTps(m.tps) });
       }
+      // chips das ferramentas usadas neste turno (resultados das mensagens
+      // role "tool" correspondentes, logo a seguir no histórico)
+      if (m.tool_calls) {
+        for (const call of m.tool_calls) {
+          const resp = conv.messages.find(
+            (x) => x.role === "tool" && x.tool_call_id === call.id,
+          );
+          renderToolChip(a.chipHost, call, {
+            // falha é sinalizada pelo prefixo "error" no reply (protocolo)
+            ok: !!resp && !contentText(resp.content).startsWith("error"),
+            reply: resp ? contentText(resp.content) : "",
+            path: resp?.savedPath,
+          });
+        }
+      }
+    } else if (m.role === "tool") {
+      // já mostrado no chip do turno assistant correspondente
+      continue;
     }
   }
 }
@@ -689,6 +747,7 @@ async function scan() {
   const models = await invoke<ModelInfo[]>("scan_models", { dirs: state.dirs });
   state.models = models;
   renderModelList();
+  renderEmbedSelect(); // a lista de embeddings acompanha o scan
   renderQuantForm(); // a lista de origens da aba Quantizar acompanha o scan
   renderBenchForm(); // idem para a lista de modelos do comparador
 }
@@ -874,6 +933,7 @@ async function refreshRecommendation() {
   state.rec = rec;
   $("#load-btn").removeAttribute("disabled");
   renderTuner();
+  renderToolsHint(); // suporte a tools depende do modelo/jinja escolhido
 }
 
 // ---------- Painel do Tuner ----------
@@ -1064,6 +1124,15 @@ function renderTuner() {
           state.overrides.port = val;
           scheduleRefresh();
         }),
+        // template jinja: usa o chat template embutido no GGUF (fidelidade ao
+        // treinamento + ferramentas). Mudança exige reload do servidor.
+        ctrlToggle(t("tuner.jinja"), state.overrides.jinja, (on) => {
+          state.overrides.jinja = on;
+          try {
+            localStorage.setItem(JINJA_KEY, on ? "1" : "0");
+          } catch {}
+          scheduleRefresh();
+        }),
       ]),
       // Resumo + RAM
       h("div", { class: "panel" }, [
@@ -1135,6 +1204,7 @@ function argsPreview(c: LlamaConfig): string {
       String(c.draft_max),
     );
   a.push("--host", c.host, "--port", String(c.port));
+  if (c.jinja) a.push("--jinja");
   return a.join(" ");
 }
 
@@ -1278,6 +1348,98 @@ function setPill(text: string, cls: string) {
   p.className = `pill ${cls}`;
 }
 
+/** Estado das ferramentas no painel de config do chat (transparência:
+ *  sempre visível por que estão ativas ou não). */
+function renderToolsHint() {
+  const el = $("#tools-hint");
+  if (!el) return;
+  if (toolsActive()) {
+    el.textContent = t("tools.active");
+    el.classList.remove("warn-txt");
+  } else if (!state.toolsEnabled) {
+    el.textContent = t("tools.off");
+    el.classList.remove("warn-txt");
+  } else if (state.selected && !state.selected.tools_ok) {
+    el.textContent = t("tools.noTemplate");
+    el.classList.add("warn-txt");
+  } else if (state.rec && !state.rec.config.jinja) {
+    el.textContent = t("tools.needJinja");
+    el.classList.add("warn-txt");
+  } else {
+    el.textContent = t("tools.off");
+    el.classList.remove("warn-txt");
+  }
+}
+
+/** Select dos modelos de embedding escaneados (reconstruído após o scan). */
+function renderEmbedSelect() {
+  const box = $("#embed-model-box");
+  if (!box) return;
+  box.innerHTML = "";
+  const models = state.models.filter((m) => m.is_embedding);
+  const sel = h(
+    "select",
+    {
+      class: "lang-select",
+      title: t("embed.model"),
+      onChange: (e: Event) => {
+        state.embedModel = (e.target as HTMLSelectElement).value;
+        try {
+          localStorage.setItem(EMBED_MODEL_KEY, state.embedModel);
+        } catch {}
+        renderEmbedHint();
+        if (state.embeddings) embedActiveConv();
+      },
+    },
+    [
+      h("option", { value: "" }, [t("embed.none")]),
+      ...models.map((m) =>
+        h(
+          "option",
+          {
+            value: m.path,
+            ...(m.path === state.embedModel ? { selected: true } : {}),
+          },
+          [nickOf(m)],
+        ),
+      ),
+    ],
+  );
+  box.append(h("span", { class: "k" }, [t("embed.model")]), sel);
+  renderEmbedHint();
+}
+
+function renderEmbedHint() {
+  const el = $("#embed-hint");
+  if (!el) return;
+  el.classList.remove("warn-txt");
+  if (!state.embeddings) {
+    el.textContent = t("embed.off");
+    return;
+  }
+  if (!state.embedModel) {
+    el.textContent = t("embed.needModel");
+    el.classList.add("warn-txt");
+    return;
+  }
+  el.textContent = t("embed.active");
+}
+
+/** Embeda os chunks pendentes da conversa ativa (lazy: sobe o 2º servidor). */
+async function embedActiveConv() {
+  const conv = activeConv();
+  if (!state.embedModel || !conv.docs?.length) return;
+  try {
+    const n = await invoke<number>("rag_embed_pending", {
+      convId: conv.id,
+      modelPath: state.embedModel,
+    });
+    if (n > 0) addLog(t("embed.indexed", { n }));
+  } catch (e) {
+    addLog(t("embed.error", { e: String(e) }));
+  }
+}
+
 // ---------- Logs ----------
 function addLog(line: string) {
   const pre = $("#logs");
@@ -1333,15 +1495,70 @@ function buildChatView() {
             type: "checkbox",
             checked: state.think, // false por padrao (opt-in)
             onChange: (e: Event) => {
-              // No-think e per-request (prefill <think></think> em llama.ts):
-              // aplica no proximo envio, sem reiniciar o servidor.
+              // No-think e per-request (prefill em llama.ts): aplica no
+              // proximo envio, sem reiniciar o servidor.
               state.think = (e.target as HTMLInputElement).checked;
               localStorage.setItem(THINK_KEY, state.think ? "1" : "0");
             },
           }),
         ]),
+        h("div", { class: "tools-config" }, [
+          h("div", { class: "save-dir-row" }, [
+            h("span", { class: "k" }, [t("tools.saveDir")]),
+            h("span", {
+              id: "save-dir-path",
+              class: "save-dir-path",
+              title: state.saveDir,
+            }, [state.saveDir || "…"]),
+            h(
+              "button",
+              { class: "mini", id: "pick-save-dir" },
+              [t("tools.choose")],
+            ),
+          ]),
+          h("label", { class: "ctrl toggle", style: "margin-top:6px" }, [
+            h("span", {}, [t("tools.toggle")]),
+            h("input", {
+              type: "checkbox",
+              checked: state.toolsEnabled, // ligado por padrao
+              onChange: (e: Event) => {
+                state.toolsEnabled = (e.target as HTMLInputElement).checked;
+                localStorage.setItem(
+                  TOOLS_KEY,
+                  state.toolsEnabled ? "1" : "0",
+                );
+                renderToolsHint();
+              },
+            }),
+          ]),
+          h("div", { id: "tools-hint", class: "tools-hint" }, []),
+          // busca semântica (embeddings): ON = híbrido BM25 + semântico
+          h("div", { class: "embed-config" }, [
+            h("label", { class: "ctrl toggle" }, [
+              h("span", {}, [t("embed.toggle")]),
+              h("input", {
+                type: "checkbox",
+                checked: state.embeddings,
+                onChange: (e: Event) => {
+                  state.embeddings = (e.target as HTMLInputElement).checked;
+                  try {
+                    localStorage.setItem(
+                      EMBED_KEY,
+                      state.embeddings ? "1" : "0",
+                    );
+                  } catch {}
+                  renderEmbedHint();
+                  if (state.embeddings) embedActiveConv();
+                },
+              }),
+            ]),
+            h("div", { id: "embed-model-box", class: "save-dir-row" }, []),
+            h("div", { id: "embed-hint", class: "tools-hint" }, []),
+          ]),
+        ]),
       ]),
       h("div", { id: "img-preview", class: "img-preview hidden" }, []),
+      h("div", { id: "doc-bar", class: "doc-bar hidden" }, []),
       h("div", { id: "prompts-panel", class: "prompts-panel hidden" }, []),
       h("div", { class: "composer" }, [
         h(
@@ -1361,6 +1578,15 @@ function buildChatView() {
             title: t("chat.attachTitle"),
           },
           ["📎"],
+        ),
+        h(
+          "button",
+          {
+            id: "attach-pdf",
+            class: "mini attach",
+            title: t("chat.attachPdf"),
+          },
+          ["📄"],
         ),
         h("textarea", {
           id: "input",
@@ -1391,6 +1617,38 @@ function buildChatView() {
     reader.readAsDataURL(f);
     fileInput.value = "";
   });
+
+  // anexo de PDF: diálogo nativo (o backend precisa do PATH do arquivo) →
+  // extração + indexação no rag.db, escopado na conversa ativa
+  $("#attach-pdf").addEventListener("click", attachPdf);
+
+  // pasta de salvamento das ferramentas (diálogo nativo, reusa pick_folder)
+  $("#pick-save-dir").addEventListener("click", async () => {
+    const picked = await invoke<string | null>("pick_folder");
+    if (!picked) return;
+    state.saveDir = picked;
+    try {
+      localStorage.setItem(SAVE_DIR_KEY, picked);
+    } catch {}
+    const el = $("#save-dir-path");
+    el.textContent = picked;
+    el.title = picked;
+  });
+  // resolve a pasta padrão (~/Documents) na 1ª execução
+  if (!state.saveDir) {
+    invoke<string>("default_save_dir")
+      .then((d) => {
+        state.saveDir = d;
+        const el = $("#save-dir-path");
+        if (el) {
+          el.textContent = d;
+          el.title = d;
+        }
+      })
+      .catch(() => {});
+  }
+  renderToolsHint();
+  renderEmbedSelect();
 
   const input = $<HTMLTextAreaElement>("#input");
   input.addEventListener("keydown", (e) => {
@@ -1428,6 +1686,7 @@ function buildChatView() {
     newConversation();
     renderConvBar();
     renderMessages();
+    renderDocBar();
     $<HTMLTextAreaElement>("#input")?.focus();
   });
   $("#export-chat").addEventListener("click", exportChat);
@@ -1554,6 +1813,279 @@ function renderImgPreview() {
   );
 }
 
+// ---------- Documentos (PDF) da conversa ----------
+// O texto extraído vive no rag.db (backend); a conversa guarda só a
+// referência (doc_id/nome/páginas/chars) pro chip e pra decisão de estratégia.
+
+async function attachPdf() {
+  if (state.busy) return;
+  const path = await invoke<string | null>("pick_pdf");
+  if (!path) return;
+  const conv = activeConv();
+  showToast(t("rag.adding"), false);
+  try {
+    const res = await invoke<{ meta: ConvDoc; ocr_pages: number }>(
+      "rag_add_pdf",
+      { path, convId: conv.id },
+    );
+    conv.docs = [...(conv.docs ?? []), res.meta];
+    saveConvs();
+    renderDocBar();
+    showToast(
+      res.ocr_pages > 0
+        ? t("rag.addedOcr", {
+            name: res.meta.name,
+            pages: res.meta.pages,
+            ocr: res.ocr_pages,
+          })
+        : t("rag.added", {
+            name: res.meta.name,
+            pages: res.meta.pages,
+          }),
+      false,
+    );
+  } catch (e) {
+    const msg = String(e);
+    if (msg.startsWith("NO_TEXT")) {
+      showToast(t("rag.noText"), true);
+    } else if (msg.startsWith("TOO_BIG")) {
+      showToast(t("rag.tooBig"), true);
+    } else {
+      showToast(t("rag.error", { e: msg }), true);
+    }
+  }
+}
+
+function renderDocBar() {
+  const box = $("#doc-bar");
+  if (!box) return;
+  box.innerHTML = "";
+  const docs = activeConv().docs ?? [];
+  if (!docs.length) {
+    box.classList.add("hidden");
+    return;
+  }
+  box.classList.remove("hidden");
+  for (const d of docs) {
+    box.append(
+      h("div", { class: "doc-chip", title: d.name }, [
+        h("span", { class: "doc-name" }, ["📄 ", d.name]),
+        h("span", { class: "doc-meta" }, [t("rag.docPages", { pages: d.pages })]),
+        h(
+          "button",
+          {
+            class: "x",
+            title: t("rag.remove"),
+            onClick: () => {
+              if (state.busy) return;
+              const conv = activeConv();
+              conv.docs = (conv.docs ?? []).filter((x) => x.doc_id !== d.doc_id);
+              saveConvs();
+              invoke("rag_remove_doc", {
+                convId: conv.id,
+                docId: d.doc_id,
+              }).catch(() => {});
+              renderDocBar();
+            },
+          },
+          ["×"],
+        ),
+      ]),
+    );
+  }
+}
+
+/** Painel recolhível "Fontes consultadas" — exatamente o que foi injetado
+ *  no prompt (transparência: nada de contexto oculto). */
+function sourcesPanel(rag: RagPayload): HTMLElement {
+  const preview = (s: RagSource) =>
+    s.text.length > 400 ? s.text.slice(0, 400) + "…" : s.text;
+  return h("details", { class: "sources" }, [
+    h("summary", {}, [t("rag.sources", { n: rag.sources.length })]),
+    ...rag.sources.map((s) =>
+      h("div", { class: "source" }, [
+        h(
+          "div",
+          { class: "source-head" },
+          [
+            s.full
+              ? t("rag.fullDoc", { name: s.name })
+              : t("rag.chunkOf", { name: s.name, page: s.page ?? 1 }),
+          ],
+        ),
+        h("div", { class: "source-text", title: s.text }, [preview(s)]),
+      ]),
+    ),
+  ]);
+}
+
+// ---------- Ferramentas do modelo (tool calls) ----------
+// O modelo pede (tool_calls na API); o app executa e devolve o resultado.
+// O modelo só produz MARKDOWN — a conversão para o formato é NOSSA (é o
+// que torna viável em modelos pequenos).
+
+/** Definição exposta ao modelo (padrão aberto da API — nada oculto). */
+const SAVE_DOCUMENT_TOOL: ToolDef = {
+  type: "function",
+  function: {
+    name: "save_document",
+    description:
+      "Salva um documento em disco. Use quando o usuário pedir para criar ou salvar um arquivo (ex.: 'crie um documento word sobre X', 'faça uma página html com Y', 'salve um texto sobre Z'). Escreva o conteúdo completo em MARKDOWN — o app converte para o formato pedido.",
+    parameters: {
+      type: "object",
+      properties: {
+        filename: {
+          type: "string",
+          description: "Nome do arquivo, sem extensão (ex.: 'relatorio-vendas')",
+        },
+        format: {
+          type: "string",
+          enum: ["docx", "html", "md", "txt"],
+          description:
+            "Formato: 'docx' para documento Word, 'html' para página web, 'md' para markdown, 'txt' para texto puro",
+        },
+        content: {
+          type: "string",
+          description: "Conteúdo completo do documento, em markdown",
+        },
+      },
+      required: ["filename", "format", "content"],
+    },
+  },
+};
+
+/** Busca mais trechos nos PDFs anexados (a "skill" de consulta do modelo —
+ *  só aparece quando a conversa tem documentos). */
+const SEARCH_DOCS_TOOL: ToolDef = {
+  type: "function",
+  function: {
+    name: "search_docs",
+    description:
+      "Busca trechos nos documentos (PDFs) anexados a esta conversa. Use quando precisar de informação específica do documento que não está no contexto atual. Retorna os trechos mais relevantes com documento e página.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Termos de busca (palavras-chave do assunto procurado)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
+
+/** Ferramentas ativas nesta conversa? Modelo com template de tools +
+ *  usuário ligado + jinja on (o template legado não suporta tools). */
+function toolsActive(): boolean {
+  return (
+    state.toolsEnabled &&
+    !!state.selected?.tools_ok &&
+    !!state.rec?.config.jinja
+  );
+}
+
+/** Executa UMA chamada de ferramenta (argumentos são JSON do modelo —
+ *  tratados como não-confiáveis; o backend sanitiza de novo). */
+async function executeTool(
+  call: ToolCall,
+): Promise<{ ok: boolean; reply: string; path?: string }> {
+  let args: {
+    filename?: string;
+    format?: string;
+    content?: string;
+    query?: string;
+  } = {};
+  try {
+    args = JSON.parse(call.arguments || "{}");
+  } catch {
+    return { ok: false, reply: "error: invalid JSON arguments" };
+  }
+
+  // consulta nos documentos da conversa (a "skill" de busca)
+  if (call.name === "search_docs") {
+    const query = String(args.query ?? "").trim();
+    if (!query) return { ok: false, reply: "error: empty query" };
+    const conv = activeConv();
+    if (!conv.docs?.length) {
+      return { ok: false, reply: "error: no documents attached to this chat" };
+    }
+    try {
+      const chunks = await invoke<RagChunk[]>("rag_search", {
+        convId: conv.id,
+        query,
+        k: 5,
+      });
+      return { ok: true, reply: formatSearchReply(chunks) };
+    } catch (e) {
+      return { ok: false, reply: `error searching: ${e}` };
+    }
+  }
+
+  if (call.name !== "save_document") {
+    return { ok: false, reply: `error: unknown tool ${call.name}` };
+  }
+  let dir = state.saveDir;
+  if (!dir) {
+    dir = await invoke<string>("default_save_dir");
+    state.saveDir = dir;
+    try {
+      localStorage.setItem(SAVE_DIR_KEY, dir);
+    } catch {}
+  }
+  try {
+    const res = await invoke<{ path: string; format: string; bytes: number }>(
+      "tool_save_document",
+      {
+        dir,
+        filename: String(args.filename ?? "documento"),
+        format: String(args.format ?? "md"),
+        content: String(args.content ?? ""),
+      },
+    );
+    return { ok: true, reply: `Saved to: ${res.path}`, path: res.path };
+  } catch (e) {
+    return { ok: false, reply: `error saving: ${e}` };
+  }
+}
+
+/** Chip "🛠 ferramenta → alvo" na bolha (com botão abrir pasta). */
+function renderToolChip(
+  host: HTMLElement,
+  call: ToolCall,
+  res: { ok: boolean; reply: string; path?: string },
+) {
+  let args: { filename?: string; format?: string; query?: string } = {};
+  try {
+    args = JSON.parse(call.arguments || "{}");
+  } catch {}
+  const label =
+    call.name === "search_docs"
+      ? `"${String(args.query ?? "?")}"`
+      : `${String(args.filename ?? "?")}.${String(args.format ?? "?")}`;
+  host.append(
+    h("div", { class: "tool-chip" + (res.ok ? "" : " err"), title: res.reply }, [
+      h("span", { class: "tool-ico" }, [call.name === "search_docs" ? "🔎" : "🛠"]),
+      h("span", { class: "tool-label" }, [label]),
+      ...(res.ok && res.path
+        ? [
+            h(
+              "button",
+              {
+                class: "mini",
+                onClick: () =>
+                  invoke("open_in_folder", { path: res.path }).catch(() => {}),
+              },
+              [t("tools.openFolder")],
+            ),
+          ]
+        : []),
+      ...(res.ok ? [] : [h("span", { class: "warn-txt" }, ["⚠"])]),
+    ]),
+  );
+  scrollIfStick();
+}
+
 // Durante o streaming o botao vira "Parar" e deve ABORTAR; caso contrario, envia.
 function onSendOrStop() {
   if (state.busy) {
@@ -1592,12 +2124,14 @@ function addMessage(
   role: "user" | "assistant",
   content: string,
   images: string[] = [],
+  rag?: RagPayload,
 ): HTMLElement {
   const box = $("#messages");
   box.querySelector(".empty")?.remove();
   const bubbleKids: (Node | string)[] = [
     ...images.map((src) => h("img", { class: "chat-img", src })),
     content,
+    ...(rag ? [sourcesPanel(rag)] : []),
   ];
   const msg = h("div", { class: `msg ${role}` }, [
     h("div", { class: "role" }, [
@@ -1647,8 +2181,59 @@ async function send() {
         { type: "text", text: text || t("chat.describeImage") },
       ]
     : text;
-  addMessage("user", contentText(content), img ? [img] : []);
-  conv.messages.push({ role: "user", content });
+
+  // ---------- RAG: busca os trechos ANTES de montar a mensagem ----------
+  // PDF pequeno → texto inteiro; grande → BM25 top-k. O bloco montado é
+  // exatamente o que o painel "Fontes" mostra — nada oculto.
+  // try/catch: falha no índice não pode travar a UI (busy/abort) — segue
+  // sem RAG e loga o problema.
+  let rag: RagPayload | undefined;
+  const docs = conv.docs ?? [];
+  if (docs.length && text) {
+    try {
+      const totalChars = docs.reduce((s, d) => s + d.chars, 0);
+      const ctxSize = state.rec?.config.ctx_size ?? 8192;
+      const strat = decideStrategy(totalChars, ctxSize);
+      let sources: RagSource[];
+      if (strat.mode === "full") {
+        const parts: RagSource[] = [];
+        for (const d of docs) {
+          const txt = await invoke<string | null>("rag_doc_text", {
+            convId: conv.id,
+            docId: d.doc_id,
+          });
+          if (txt)
+            parts.push({ name: d.name, page: null, text: txt, full: true });
+        }
+        sources = parts;
+      } else {
+        const chunks = await invoke<RagChunk[]>("rag_search", {
+          convId: conv.id,
+          query: text,
+          k: strat.k,
+          hybrid: state.embeddings && !!state.embedModel,
+        });
+        sources = chunks.map((c) => ({
+          name: c.doc_name,
+          page: c.page,
+          text: c.text,
+          full: false,
+        }));
+      }
+      if (sources.length) {
+        rag = { context: buildRagContext(sources, text), sources };
+      }
+    } catch (e) {
+      addLog(t("rag.error", { e: String(e) }));
+    }
+  }
+
+  addMessage("user", contentText(content), img ? [img] : [], rag);
+  conv.messages.push({
+    role: "user",
+    content,
+    ...(rag ? { rag } : {}),
+  });
   if (conv.messages.length === 1) {
     conv.title = (text || t("chat.image")).slice(0, 40); // titulo = inicio da 1a msg
     renderConvBar();
@@ -1658,13 +2243,30 @@ async function send() {
   a.answer.classList.add("streaming");
 
   const sysContent = state.systemPrompt.trim();
-  const msgs: ChatMessage[] = [
+  // mensagens pro modelo: o contexto RAG entra ANEXADO à pergunta. A
+  // persistência guarda pergunta + rag separados (UI limpa); a API recebe
+  // o bloco montado — histórico antigo incluído, determinístico. Re-montado
+  // a cada rodada de ferramenta (as mensagens tool entram no protocolo).
+  const buildApiMessages = (): ChatMessage[] => [
     // so envia system message se houver conteudo
     ...(sysContent ? [{ role: "system" as const, content: sysContent }] : []),
-    // historico cru: o no-think e aplicado em streamChat (prefill do turno
-    // assistant com <think></think> fechado), nao injetado neste texto.
-    ...conv.messages,
+    ...conv.messages.map((m) => {
+      if (m.role !== "user" || !m.rag) return m;
+      if (typeof m.content === "string") {
+        return { ...m, content: m.rag.context };
+      }
+      // imagem + RAG: o text part carrega o contexto
+      return {
+        ...m,
+        content: m.content.map((p) =>
+          p.type === "text"
+            ? { type: "text" as const, text: m.rag!.context }
+            : p,
+        ),
+      };
+    }),
   ];
+  let msgs: ChatMessage[] = buildApiMessages();
 
   const port = state.rec!.config.port;
   state.abort = new AbortController();
@@ -1672,6 +2274,9 @@ async function send() {
   $("#send").textContent = t("btn.stop");
   const t0 = performance.now();
   let acc = "";
+  // texto das rodadas ANTERIORES de ferramenta (o render final precisa do
+  // texto completo da bolha, não só da última rodada)
+  let full = "";
   let thinkText = "";
   let lastTps: number | null = null;
   let lastTokens = 0;
@@ -1682,91 +2287,147 @@ async function send() {
   const RENDER_INTERVAL_MS = 120;
   let lastRender = 0;
 
-  try {
-    for await (const chunk of streamChat(
-      port,
-      msgs,
-      state.sampling,
-      state.abort.signal,
-      state.think,
-    )) {
-      if (chunk.note) addLog(chunk.note);
-      if (chunk.reasoning) {
-        thinkText += chunk.reasoning;
-        a.thinkingWrap.style.display = "";
-        a.thinking.textContent = thinkText;
-      }
-      if (chunk.delta) {
-        acc += chunk.delta;
-        const now = performance.now();
-        if (now - lastRender >= RENDER_INTERVAL_MS) {
-          lastRender = now;
-          renderMarkdown(a.answer, acc);
-          scrollIfStick();
+  // Ferramentas expostas ao modelo: só quando o modelo sabe (template com
+  // tools), o usuário deixou ligado e o --jinja está on. A busca nos
+  // documentos só aparece quando a conversa tem PDFs anexados.
+  const tools = toolsActive()
+    ? [
+        SAVE_DOCUMENT_TOOL,
+        ...(conv.docs?.length ? [SEARCH_DOCS_TOOL] : []),
+      ]
+    : undefined;
+  // Loop de ferramentas: o modelo pede (ex.: save_document), o app executa,
+  // devolve o resultado e o modelo continua — até 4 rodadas (modelos
+  // pequenos podem entrar em loop; o teto corta).
+  const MAX_TOOL_ROUNDS = 4;
+  let rounds = 0;
+  let aborted = false;
+  let pendingTools: ToolCall[] = [];
+
+  do {
+    pendingTools = [];
+    try {
+      for await (const chunk of streamChat(
+        port,
+        msgs,
+        state.sampling,
+        state.abort.signal,
+        state.think,
+        tools,
+      )) {
+        if (chunk.note) addLog(chunk.note);
+        if (chunk.reasoning) {
+          thinkText += chunk.reasoning;
+          a.thinkingWrap.style.display = "";
+          a.thinking.textContent = thinkText;
         }
+        if (chunk.delta) {
+          acc += chunk.delta;
+          const now = performance.now();
+          if (now - lastRender >= RENDER_INTERVAL_MS) {
+            lastRender = now;
+            renderMarkdown(a.answer, full + (full && acc ? "\n\n" : "") + acc);
+            scrollIfStick();
+          }
+        }
+        if (chunk.usage) {
+          showCtx(chunk.usage);
+          if (chunk.usage.completion_tokens != null)
+            lastTokens = chunk.usage.completion_tokens;
+        }
+        if (chunk.timings?.predicted_per_second) {
+          showHud(chunk.timings);
+          lastTps = chunk.timings.predicted_per_second;
+          renderTpsLive(
+            a.meta,
+            chunk.timings.predicted_per_second,
+            chunk.timings.prompt_per_second ?? null,
+          );
+        }
+        if (chunk.toolCalls) pendingTools = chunk.toolCalls;
+        if (chunk.done) break;
       }
-      if (chunk.usage) {
-        showCtx(chunk.usage);
-        if (chunk.usage.completion_tokens != null)
-          lastTokens = chunk.usage.completion_tokens;
+    } catch (e) {
+      // abort do usuario (botao Parar) nao e erro: so finaliza com o parcial
+      aborted = (e as { name?: string })?.name === "AbortError";
+      if (!aborted) {
+        acc += t("chat.errorInline", { e: String(e) });
       }
-      if (chunk.timings?.predicted_per_second) {
-        showHud(chunk.timings);
-        lastTps = chunk.timings.predicted_per_second;
-        renderTpsLive(
-          a.meta,
-          chunk.timings.predicted_per_second,
-          chunk.timings.prompt_per_second ?? null,
-        );
-      }
-      if (chunk.done) break;
     }
-  } catch (e) {
-    // abort do usuario (botao Parar) nao e erro: so finaliza com o parcial
-    const aborted = (e as { name?: string })?.name === "AbortError";
-    if (!aborted) {
-      acc += t("chat.errorInline", { e: String(e) });
-    }
-  } finally {
-    a.answer.classList.remove("streaming");
-    // render final completo (o throttle pode ter deixado texto cru no DOM)
-    renderMarkdown(a.answer, acc);
-    addCodeCopy(a.answer);
-    scrollIfStick();
-    // modelo de reasoning que so "pensou" e nao deu resposta limpa
-    if (!acc.trim() && thinkText.trim()) {
-      a.answer.textContent = t("chat.thoughtOnly");
-      a.answer.classList.add("muted");
-    }
-    const secs = (performance.now() - t0) / 1000;
-    if (lastTps != null) {
-      a.meta.textContent = t("chat.tpsFinal", {
-        tps: fmtTps(lastTps),
-        secs: secs.toFixed(1),
-        n: lastTokens || acc.length,
+
+    // rodada terminou com pedidos de ferramenta? executa e continua
+    if (pendingTools.length && !aborted) {
+      // congela o texto desta rodada e persiste o turno com os pedidos
+      full += (full ? "\n\n" : "") + acc;
+      conv.messages.push({
+        role: "assistant",
+        content: acc,
+        ...(thinkText.trim() ? { reasoning: thinkText } : {}),
+        tool_calls: pendingTools,
       });
-    } else {
-      a.meta.textContent = `${secs.toFixed(1)}s`;
+      // executar SEMPRE (mesmo no teto de rodadas): um assistant com
+      // tool_calls sem as respostas "tool" quebra o próximo request
+      for (const call of pendingTools) {
+        const res = await executeTool(call);
+        conv.messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: res.reply,
+          ...(res.path ? { savedPath: res.path } : {}),
+        });
+        renderToolChip(a.chipHost, call, res);
+      }
+      saveConvs();
+      acc = "";
+      thinkText = "";
+      if (rounds >= MAX_TOOL_ROUNDS) break; // teto: histórico válido, sem nova rodada
+      rounds++;
+      msgs = buildApiMessages();
+      continue;
     }
-    conv.messages.push({
-      role: "assistant",
-      content: acc,
-      // pensamento fica salvo para reabrir a conversa; nunca volta pra API
-      ...(thinkText.trim() ? { reasoning: thinkText } : {}),
-      ...(lastTps != null ? { tps: lastTps, secs } : {}),
+    break;
+  } while (true);
+
+  // ---- finalização (sempre roda, mesmo com abort) ----
+  a.answer.classList.remove("streaming");
+  const combined = full + (full && acc ? "\n\n" : "") + acc;
+  // render final completo (o throttle pode ter deixado texto cru no DOM)
+  renderMarkdown(a.answer, combined);
+  addCodeCopy(a.answer);
+  scrollIfStick();
+  // modelo de reasoning que so "pensou" e nao deu resposta limpa
+  if (!combined.trim() && thinkText.trim()) {
+    a.answer.textContent = t("chat.thoughtOnly");
+    a.answer.classList.add("muted");
+  }
+  const secs = (performance.now() - t0) / 1000;
+  if (lastTps != null) {
+    a.meta.textContent = t("chat.tpsFinal", {
+      tps: fmtTps(lastTps),
+      secs: secs.toFixed(1),
+      n: lastTokens || combined.length,
     });
-    saveConvs();
-    state.busy = false;
-    state.abort = null;
-    $("#send").textContent = t("btn.send");
-    if (!$("#hud").textContent) {
-      $("#hud").textContent = `${secs.toFixed(1)}s`;
-    }
+  } else {
+    a.meta.textContent = `${secs.toFixed(1)}s`;
+  }
+  conv.messages.push({
+    role: "assistant",
+    content: acc,
+    // pensamento fica salvo para reabrir a conversa; nunca volta pra API
+    ...(thinkText.trim() ? { reasoning: thinkText } : {}),
+    ...(lastTps != null ? { tps: lastTps, secs } : {}),
+  });
+  saveConvs();
+  state.busy = false;
+  state.abort = null;
+  $("#send").textContent = t("btn.send");
+  if (!$("#hud").textContent) {
+    $("#hud").textContent = `${secs.toFixed(1)}s`;
   }
 }
 
 // Cria uma mensagem de assistente com secao recolhivel de "pensamento",
-// resposta em markdown e botao de copiar (copia a fonte crua).
+// resposta em markdown, chips de ferramentas usadas e botao de copiar.
 function addAssistantMessage() {
   const box = $("#messages");
   box.querySelector(".empty")?.remove();
@@ -1778,6 +2439,9 @@ function addAssistantMessage() {
   );
   (thinkingWrap as HTMLElement).style.display = "none";
   const answer = h("div", { class: "bubble" }, []);
+  // chips de ferramenta ficam FORA do bubble: o renderMarkdown sobrescreve
+  // o innerHTML do bubble a cada render — os chips seriam apagados
+  const chipHost = h("div", { class: "tool-chips" }, []);
   const meta = h("div", { class: "meta-line" }, ["—"]);
   const copyBtn = h(
     "button",
@@ -1799,11 +2463,18 @@ function addAssistantMessage() {
     h("div", { class: "role" }, [t("role.assistant") + " ", copyBtn]),
     thinkingWrap,
     answer,
+    chipHost,
     meta,
   ]);
   box.append(msg);
   scrollIfStick();
-  return { answer, thinking, thinkingWrap: thinkingWrap as HTMLElement, meta };
+  return {
+    answer,
+    thinking,
+    thinkingWrap: thinkingWrap as HTMLElement,
+    chipHost,
+    meta,
+  };
 }
 
 function showHud(t: {

@@ -31,6 +31,9 @@ pub struct LlamaConfig {
     pub draft_model: Option<String>,
     pub draft_n_gpu_layers: u32,
     pub draft_max: u32,
+    /// Template jinja do GGUF (--jinja): necessário para tool calls e usa o
+    /// prompt exato com que o modelo foi treinado. Default ligado.
+    pub jinja: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -51,6 +54,8 @@ pub struct TuneOverrides {
     /// Janela do rascunho (--spec-draft-n-max): tokens propostos por passo.
     /// None = default 16.
     pub draft_max: Option<u32>,
+    /// Template jinja do GGUF (--jinja). None = ligado (default).
+    pub jinja: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -309,6 +314,22 @@ pub fn recommend(
     // rascunho fraco ou contexto longo (mais propostas = mais rejeicao).
     let draft_max = ov.draft_max.unwrap_or(16).clamp(1, 64);
 
+    // --- Template jinja (--jinja) ---
+    // Ligado por padrão (decisão 2026-10-21): usa o chat template embutido
+    // no GGUF — o prompt exato com que o modelo foi treinado — e habilita
+    // tool calls. Sem ele o llama-server usa um template genérico legado
+    // que não suporta ferramentas.
+    let jinja = ov.jinja.unwrap_or(true);
+    if jinja {
+        rationale.push(
+            "--jinja ligado: o servidor usa o chat template embutido no GGUF (como LM Studio/Ollama). Necessário para as ferramentas (criar documentos) e fiel ao treinamento do modelo.".to_string(),
+        );
+    } else {
+        rationale.push(
+            "--jinja desligado (template genérico legado): as ferramentas de criar documentos ficam indisponíveis.".to_string(),
+        );
+    }
+
     let config = LlamaConfig {
         model_path: model.path.clone(),
         model_name: model.name.clone(),
@@ -329,6 +350,7 @@ pub fn recommend(
         draft_model: if use_speculative { draft_path } else { None },
         draft_n_gpu_layers,
         draft_max,
+        jinja,
     };
 
     Recommendation {

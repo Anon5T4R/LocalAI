@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ThinkFilter, contentText } from "../../llama";
+import { ThinkFilter, ToolCallAggregator, contentText } from "../../llama";
 
 describe("contentText", () => {
   // O content multimodal carrega a imagem como data-URL base64 de centenas de
@@ -127,5 +127,46 @@ describe("ThinkFilter", () => {
     const r = run(["<think>razao</thi"]);
     expect(r.delta).toBe("");
     expect(r.reasoning).toBe("razao</thi");
+  });
+});
+
+describe("ToolCallAggregator", () => {
+  // A API entrega tool_calls em DELTAS: id/name chegam uma vez, arguments
+  // em pedaços de string JSON. Sem agregação, o loop de tools não funciona.
+  it("agrega deltas por index (arguments em pedaços)", () => {
+    const agg = new ToolCallAggregator();
+    agg.feed([
+      {
+        index: 0,
+        id: "call_1",
+        function: { name: "save_document", arguments: '{"file' },
+      },
+    ]);
+    agg.feed([
+      { index: 0, function: { arguments: 'name":"rel","format":"md"}' } },
+    ]);
+    const out = agg.drain();
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe("call_1");
+    expect(out[0].name).toBe("save_document");
+    expect(JSON.parse(out[0].arguments)).toEqual({
+      filename: "rel",
+      format: "md",
+    });
+  });
+
+  // Várias chamadas no mesmo turno: cada index é uma chamada; a ordem do
+  // output segue o index, não a ordem de chegada dos deltas.
+  it("ordena por index e descarta chamadas sem nome", () => {
+    const agg = new ToolCallAggregator();
+    agg.feed([{ index: 1, id: "c2", function: { name: "b", arguments: "{}" } }]);
+    agg.feed([{ index: 0, id: "c1", function: { name: "a", arguments: "{}" } }]);
+    agg.feed([{ index: 2, id: "c3" }]); // delta sem name (só arguments)
+    const out = agg.drain();
+    expect(out.map((c) => c.name)).toEqual(["a", "b"]);
+  });
+
+  it("vazio devolve lista vazia", () => {
+    expect(new ToolCallAggregator().drain()).toEqual([]);
   });
 });

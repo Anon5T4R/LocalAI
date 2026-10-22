@@ -42,6 +42,13 @@ pub struct ModelInfo {
     pub size_label: Option<String>,
     pub has_mmproj: bool,
     pub mmproj_path: Option<String>,
+    /// O chat template embutido sabe desenhar tool calls? (heurística:
+    /// template menciona "tools"; sem template no GGUF o default do
+    /// llama.cpp com --jinja suporta — ex.: Gemma 3 não tem.)
+    pub tools_ok: bool,
+    /// Parece um modelo de EMBEDDING (busca semântica)? Heurística por arch
+    /// e nome — usado só para filtrar/sugerir na UI, não bloqueia nada.
+    pub is_embedding: bool,
 }
 
 struct Reader<R: Read> {
@@ -205,6 +212,7 @@ pub fn parse_header(path: &Path) -> std::io::Result<ParsedGguf> {
     let mut size_label: Option<String> = None;
     let mut file_type: Option<u32> = None;
     let mut name: Option<String> = None;
+    let mut chat_template: Option<String> = None;
 
     for _ in 0..kv_count {
         let key = r.string()?;
@@ -229,6 +237,12 @@ pub fn parse_header(path: &Path) -> std::io::Result<ParsedGguf> {
             }
             "general.file_type" => {
                 file_type = as_u32(&val);
+            }
+            // chat template embutido (chave clássica ou a nova tokenizer.*)
+            "tokenizer.chat_template" | "chat_template" => {
+                if let Val::S(s) = &val {
+                    chat_template = Some(s.clone());
+                }
             }
             _ => {
                 // chaves dependentes da arquitetura: "<arch>.block_count" etc.
@@ -257,6 +271,7 @@ pub fn parse_header(path: &Path) -> std::io::Result<ParsedGguf> {
         head_count_kv,
         size_label,
         file_type,
+        chat_template,
     })
 }
 
@@ -270,6 +285,33 @@ pub struct ParsedGguf {
     pub head_count_kv: Option<u32>,
     pub size_label: Option<String>,
     pub file_type: Option<u32>,
+    pub chat_template: Option<String>,
+}
+
+/// Modelo de embedding? Archs que o llama.cpp serve com --embedding
+/// (BERT family) + nomes típicos dos GGUFs publicados.
+fn is_embedding_model(arch: &str, fname: &str) -> bool {
+    let arch = arch.to_lowercase();
+    let name = fname.to_lowercase();
+    matches!(
+        arch.as_str(),
+        "bert" | "nomic-bert" | "jina-bert-v2" | "gte" | "t5encoder" | "xlm-roberta"
+    ) || [
+        "embed", "bge-", "e5-", "gte-", "jina", "nomic-embed", "arctic-embed",
+        "snowflake",
+    ]
+    .iter()
+    .any(|p| name.contains(p))
+}
+
+/// O template suporta tool calls? Heurística: template que menciona "tools"
+/// (cobre "tools"/"tool_calls"/"builtin_tools"). Sem template embutido, o
+/// default do llama.cpp com --jinja suporta — assume true.
+fn tools_ok_of(chat_template: &Option<String>) -> bool {
+    match chat_template {
+        None => true,
+        Some(t) => t.contains("tools"),
+    }
 }
 
 // Deriva o rotulo de quantizacao a partir do nome do arquivo (mais confiavel
@@ -367,6 +409,7 @@ pub fn scan_dirs(dirs: &[String]) -> Vec<ModelInfo> {
             size_label,
             gen_name,
             ftype,
+            chat_template,
         ) = match parsed {
             Some(p) => (
                 p.arch,
@@ -378,6 +421,7 @@ pub fn scan_dirs(dirs: &[String]) -> Vec<ModelInfo> {
                 p.size_label,
                 p.name,
                 p.file_type,
+                p.chat_template,
             ),
             None => (
                 "desconhecida".into(),
@@ -389,8 +433,11 @@ pub fn scan_dirs(dirs: &[String]) -> Vec<ModelInfo> {
                 None,
                 None,
                 None,
+                None,
             ),
         };
+        let tools_ok = tools_ok_of(&chat_template);
+        let embedding_model = is_embedding_model(&arch, &fname);
 
         let display_name = gen_name.unwrap_or_else(|| {
             path.file_stem()
@@ -414,6 +461,8 @@ pub fn scan_dirs(dirs: &[String]) -> Vec<ModelInfo> {
             size_label,
             has_mmproj: mmproj_path.is_some(),
             mmproj_path,
+            tools_ok,
+            is_embedding: embedding_model,
         });
     }
 

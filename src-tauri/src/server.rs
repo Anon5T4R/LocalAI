@@ -119,6 +119,13 @@ fn build_args(cfg: &LlamaConfig) -> Vec<String> {
         push(&mut a, "--spec-draft-n-max", cfg.draft_max.to_string());
     }
 
+    // Template jinja do GGUF: usa o prompt com que o modelo foi treinado e
+    // habilita tool calls (o template legado não suporta ferramentas).
+    // Toggle nos Ajustes; default ligado.
+    if cfg.jinja {
+        a.push("--jinja".to_string());
+    }
+
     // NB: o no-think NAO e controlado aqui. Testado (2026-07-04): nos builds
     // atuais do llama.cpp (b9723) o `--reasoning off` NAO desliga o pensamento
     // do Qwen3.5 (arch qwen35) — o servidor nao injeta `enable_thinking=false`

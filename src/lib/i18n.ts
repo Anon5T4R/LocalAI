@@ -154,6 +154,49 @@ const pt = {
   "chat.scrollDown": "↓ descer",
   "chat.codeCopy": "copiar código",
 
+  // ----- Documentos / RAG (PDF por conversa) -----
+  "chat.attachPdf":
+    "Anexar PDF — o texto é indexado localmente e os trechos relevantes entram no contexto",
+  "rag.adding": "Extraindo texto do PDF…",
+  "rag.added": "✓ {name} anexado ({pages} págs.)",
+  "rag.addedOcr": "✓ {name} anexado ({pages} págs., {ocr} via OCR)",
+  "rag.noText":
+    "⚠ Não encontrei texto neste PDF — provavelmente é um scan (só imagem). OCR ainda não disponível.",
+  "rag.tooBig": "⚠ PDF maior que 100 MB — recusado para não travar a extração.",
+  "rag.error": "Falha ao processar PDF: {e}",
+  "rag.docPages": "{pages} págs.",
+  "rag.remove": "Remover documento da conversa",
+  "rag.sources": "📄 Fontes consultadas ({n})",
+  "rag.fullDoc": "{name} — documento completo",
+  "rag.chunkOf": "{name}, p. {page}",
+
+  // ----- Ferramentas do modelo (tool calls) -----
+  "tools.saveDir": "Pasta de salvamento",
+  "tools.choose": "escolher",
+  "tools.toggle": "Ferramentas (o modelo pode criar arquivos)",
+  "tools.active":
+    "Ferramentas ativas: o modelo pode criar documentos (md/txt/html) na pasta escolhida.",
+  "tools.off": "Ferramentas desligadas.",
+  "tools.noTemplate":
+    "⚠ este modelo não suporta ferramentas (o template do GGUF não tem tools).",
+  "tools.needJinja":
+    "⚠ as ferramentas exigem o template jinja ligado (aba Ajustes & Auto-tuner).",
+  "tools.openFolder": "abrir pasta",
+  "tuner.jinja":
+    "Template do modelo (jinja) — necessário para ferramentas; recarregue o servidor ao mudar",
+
+  // ----- Busca semântica (embeddings) -----
+  "embed.toggle": "Busca semântica (embeddings) — melhor em paráfrases",
+  "embed.model": "Modelo de embedding",
+  "embed.none": "— nenhum —",
+  "embed.off": "Busca semântica desligada (busca por palavras).",
+  "embed.active":
+    "Busca semântica ativa: palavras + significado (fusão de rankings).",
+  "embed.needModel":
+    "⚠ escolha um modelo de embedding — baixe um GGUF de embedding (nomic-embed, bge, e5, jina…) na aba Baixar modelos.",
+  "embed.indexed": "[embed] {n} trechos indexados",
+  "embed.error": "[embed] erro: {e}",
+
   // ----- Contador de contexto -----
   "ctx.title": "Tokens de contexto usados",
   "ctx.titleFull": "Tokens de contexto usados (prompt + resposta)",
@@ -370,6 +413,48 @@ const en: Record<MessageKey, string> = {
   "chat.scrollDown": "↓ jump down",
   "chat.codeCopy": "copy code",
 
+  // ----- Documents / RAG (PDF per conversation) -----
+  "chat.attachPdf":
+    "Attach PDF — the text is indexed locally and the relevant excerpts go into the context",
+  "rag.adding": "Extracting text from the PDF…",
+  "rag.added": "✓ {name} attached ({pages} pages)",
+  "rag.addedOcr": "✓ {name} attached ({pages} pages, {ocr} via OCR)",
+  "rag.noText":
+    "⚠ No text found in this PDF — it's probably a scan (image only). OCR not available yet.",
+  "rag.tooBig": "⚠ PDF larger than 100 MB — refused to keep extraction responsive.",
+  "rag.error": "Failed to process PDF: {e}",
+  "rag.docPages": "{pages} pages",
+  "rag.remove": "Remove document from conversation",
+  "rag.sources": "📄 Sources consulted ({n})",
+  "rag.fullDoc": "{name} — full document",
+  "rag.chunkOf": "{name}, p. {page}",
+
+  // ----- Model tools (tool calls) -----
+  "tools.saveDir": "Save folder",
+  "tools.choose": "choose",
+  "tools.toggle": "Tools (the model can create files)",
+  "tools.active":
+    "Tools active: the model can create documents (md/txt/html) in the chosen folder.",
+  "tools.off": "Tools disabled.",
+  "tools.noTemplate":
+    "⚠ this model doesn't support tools (the GGUF template has no tools).",
+  "tools.needJinja":
+    "⚠ tools require the jinja template enabled (Settings & Auto-tuner tab).",
+  "tools.openFolder": "open folder",
+  "tuner.jinja":
+    "Model template (jinja) — required for tools; reload the server when changed",
+
+  // ----- Semantic search (embeddings) -----
+  "embed.toggle": "Semantic search (embeddings) — better on paraphrases",
+  "embed.model": "Embedding model",
+  "embed.none": "— none —",
+  "embed.off": "Semantic search off (word-based search).",
+  "embed.active": "Semantic search on: words + meaning (rank fusion).",
+  "embed.needModel":
+    "⚠ pick an embedding model — download an embedding GGUF (nomic-embed, bge, e5, jina…) in the Download models tab.",
+  "embed.indexed": "[embed] {n} chunks indexed",
+  "embed.error": "[embed] error: {e}",
+
   "ctx.title": "Context tokens used",
   "ctx.titleFull": "Context tokens used (prompt + answer)",
   "ctx.fullWarn":
@@ -578,6 +663,49 @@ const es: Record<MessageKey, string> = {
   "chat.tpsFinal": "{tps} tok/s · {secs}s · {n} tokens",
   "chat.scrollDown": "↓ bajar",
   "chat.codeCopy": "copiar código",
+
+  // ----- Documentos / RAG (PDF por conversación) -----
+  "chat.attachPdf":
+    "Adjuntar PDF — el texto se indexa localmente y los fragmentos relevantes entran en el contexto",
+  "rag.adding": "Extrayendo texto del PDF…",
+  "rag.added": "✓ {name} adjuntado ({pages} págs.)",
+  "rag.addedOcr": "✓ {name} adjuntado ({pages} págs., {ocr} vía OCR)",
+  "rag.noText":
+    "⚠ No encontré texto en este PDF — probablemente es un escaneo (solo imagen). OCR aún no disponible.",
+  "rag.tooBig": "⚠ PDF mayor de 100 MB — rechazado para no bloquear la extracción.",
+  "rag.error": "Error al procesar el PDF: {e}",
+  "rag.docPages": "{pages} págs.",
+  "rag.remove": "Quitar documento de la conversación",
+  "rag.sources": "📄 Fuentes consultadas ({n})",
+  "rag.fullDoc": "{name} — documento completo",
+  "rag.chunkOf": "{name}, p. {page}",
+
+  // ----- Herramientas del modelo (tool calls) -----
+  "tools.saveDir": "Carpeta de guardado",
+  "tools.choose": "elegir",
+  "tools.toggle": "Herramientas (el modelo puede crear archivos)",
+  "tools.active":
+    "Herramientas activas: el modelo puede crear documentos (md/txt/html) en la carpeta elegida.",
+  "tools.off": "Herramientas desactivadas.",
+  "tools.noTemplate":
+    "⚠ este modelo no admite herramientas (la plantilla del GGUF no tiene tools).",
+  "tools.needJinja":
+    "⚠ las herramientas requieren la plantilla jinja activada (pestaña Ajustes & Auto-tuner).",
+  "tools.openFolder": "abrir carpeta",
+  "tuner.jinja":
+    "Plantilla del modelo (jinja) — necesaria para herramientas; recarga el servidor al cambiar",
+
+  // ----- Búsqueda semántica (embeddings) -----
+  "embed.toggle": "Búsqueda semántica (embeddings) — mejor en paráfrasis",
+  "embed.model": "Modelo de embedding",
+  "embed.none": "— ninguno —",
+  "embed.off": "Búsqueda semántica desactivada (búsqueda por palabras).",
+  "embed.active":
+    "Búsqueda semántica activa: palabras + significado (fusión de rankings).",
+  "embed.needModel":
+    "⚠ elige un modelo de embedding — descarga un GGUF de embedding (nomic-embed, bge, e5, jina…) en la pestaña Descargar modelos.",
+  "embed.indexed": "[embed] {n} fragmentos indexados",
+  "embed.error": "[embed] error: {e}",
 
   "ctx.title": "Tokens de contexto usados",
   "ctx.titleFull": "Tokens de contexto usados (prompt + respuesta)",

@@ -23,6 +23,12 @@ estão nos repositórios de cada projeto.
 | ureq | MIT OR Apache-2.0 |
 | rfd | MIT |
 | raw-cpuid | MIT |
+| pdf-extract | MIT |
+| lopdf | MIT |
+| rusqlite (SQLite bundled) | MIT |
+| docx-rs | MIT |
+| pulldown-cmark | MIT |
+| windows (bindings WinRT do OCR) | MIT OR Apache-2.0 |
 
 ## Dependências (JavaScript/TypeScript)
 

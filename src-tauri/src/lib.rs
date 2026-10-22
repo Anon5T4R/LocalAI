@@ -1,9 +1,13 @@
 mod bench;
+mod embed;
 mod gguf;
 mod hardware;
 mod hub;
+mod ocr;
 mod quant;
+mod rag;
 mod server;
+mod tools;
 mod tuner;
 
 use gguf::ModelInfo;
@@ -138,6 +142,169 @@ fn pick_folder() -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+// ---------- RAG local (PDF por conversa) ----------
+// Todos async + spawn_blocking: extração de PDF e busca nunca rodam na main
+// thread (o gotcha da suíte: comando síncrono congela a janela).
+
+#[tauri::command]
+async fn rag_add_pdf(
+    app: AppHandle,
+    path: String,
+    conv_id: String,
+) -> Result<rag::AddDocResult, String> {
+    tauri::async_runtime::spawn_blocking(move || rag::ingest_pdf(&app, &path, &conv_id))
+        .await
+        .map_err(|e| format!("ingest: {e}"))?
+}
+
+#[tauri::command]
+async fn rag_search(
+    app: AppHandle,
+    conv_id: String,
+    query: String,
+    k: u32,
+    hybrid: Option<bool>,
+) -> Result<Vec<rag::Chunk>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = rag::open_db(&app)?;
+        let want_hybrid = hybrid.unwrap_or(false);
+        // BM25 (léxico) sempre roda; no híbrido ele vira o ranking de 20
+        let bm25 = rag::search(&conn, &conv_id, &query, if want_hybrid { 20 } else { k })?;
+        if !want_hybrid {
+            return Ok(bm25);
+        }
+        // semântico: só se o servidor de embeddings está de pé; qualquer
+        // falha (modelo ruim, servidor fora) cai de volta pro BM25 puro
+        if embed::status(&app).is_none() {
+            return Ok(bm25.into_iter().take(k as usize).collect());
+        }
+        let qv = match embed::embeddings(&app, &[query]) {
+            Ok(v) => match v.into_iter().next() {
+                Some(v) => v,
+                None => return Ok(bm25.into_iter().take(k as usize).collect()),
+            },
+            Err(_) => return Ok(bm25.into_iter().take(k as usize).collect()),
+        };
+        let all = rag::all_vecs(&conn, &conv_id)?;
+        let mut scored: Vec<(f32, String, u32)> = all
+            .iter()
+            .map(|(d, s, v)| (rag::cosine(&qv, v), d.clone(), *s))
+            .filter(|(score, _, _)| *score > 0.0)
+            .collect();
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(20);
+        let mut sem = Vec::new();
+        for (_, doc_id, seq) in scored {
+            if let Some(c) = rag::chunk_by_key(&conn, &conv_id, &doc_id, seq)? {
+                sem.push(c);
+            }
+        }
+        Ok(rag::rrf_fuse(&bm25, &sem, k as usize))
+    })
+    .await
+    .map_err(|e| format!("search: {e}"))?
+}
+
+/// Embeda os chunks ainda sem vetor desta conversa (busca semântica).
+/// Sobe o servidor de embeddings lazy, na primeira vez.
+#[tauri::command]
+async fn rag_embed_pending(
+    app: AppHandle,
+    conv_id: String,
+    model_path: String,
+) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = rag::open_db(&app)?;
+        let pending = rag::pending_chunks(&conn, &conv_id)?;
+        if pending.is_empty() {
+            return Ok(0);
+        }
+        embed::start(&app, &model_path)?;
+        let mut done = 0usize;
+        // lotes de 16: streaming no server + progresso previsível
+        for batch in pending.chunks(16) {
+            let texts: Vec<String> = batch.iter().map(|(_, _, t)| t.clone()).collect();
+            let vecs = embed::embeddings(&app, &texts)?;
+            for (i, (doc_id, seq, _)) in batch.iter().enumerate() {
+                if let Some(v) = vecs.get(i) {
+                    rag::add_vec(&conn, &conv_id, doc_id, *seq, v)?;
+                    done += 1;
+                }
+            }
+        }
+        Ok(done)
+    })
+    .await
+    .map_err(|e| format!("embed: {e}"))?
+}
+
+#[tauri::command]
+async fn rag_doc_text(
+    app: AppHandle,
+    conv_id: String,
+    doc_id: String,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = rag::open_db(&app)?;
+        rag::doc_text(&conn, &conv_id, &doc_id)
+    })
+    .await
+    .map_err(|e| format!("doc_text: {e}"))?
+}
+
+#[tauri::command]
+async fn rag_remove_doc(app: AppHandle, conv_id: String, doc_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = rag::open_db(&app)?;
+        rag::remove_doc(&conn, &conv_id, &doc_id)
+    })
+    .await
+    .map_err(|e| format!("remove_doc: {e}"))?
+}
+
+#[tauri::command]
+async fn rag_remove_conv(app: AppHandle, conv_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = rag::open_db(&app)?;
+        rag::remove_conv(&conn, &conv_id)
+    })
+    .await
+    .map_err(|e| format!("remove_conv: {e}"))?
+}
+
+/// Diálogo nativo de escolha do PDF (o backend precisa do PATH do arquivo —
+/// o input HTML do WebView só entrega bytes, sem caminho).
+#[tauri::command]
+fn pick_pdf() -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title("Escolha o PDF")
+        .add_filter("PDF", &["pdf"])
+        .pick_file()
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+// ---------- Ferramentas do modelo (tool calls) ----------
+
+#[tauri::command]
+fn tool_save_document(
+    dir: String,
+    filename: String,
+    format: String,
+    content: String,
+) -> Result<tools::SaveResult, String> {
+    tools::save_document(&dir, &filename, &format, &content)
+}
+
+#[tauri::command]
+fn open_in_folder(path: String) -> Result<(), String> {
+    tools::open_in_folder(&path)
+}
+
+#[tauri::command]
+fn default_save_dir() -> String {
+    tools::default_save_dir()
+}
+
 /// Diretorios candidatos onde costumam existir modelos GGUF.
 /// async: proba unidades A-Z com .exists() — drive de rede desconectado pode travar segundos.
 #[tauri::command]
@@ -238,6 +405,7 @@ pub fn run() {
             Ok(())
         })
         .manage(ServerState::default())
+        .manage(embed::EmbedState::default())
         .manage(quant::QuantState::default())
         .manage(bench::BenchState::default())
         .invoke_handler(tauri::generate_handler![
@@ -259,7 +427,16 @@ pub fn run() {
             bench_start,
             bench_cancel,
             load_conversations,
-            save_conversations
+            save_conversations,
+            pick_pdf,
+            rag_add_pdf,
+            rag_search,
+            rag_doc_text,
+            rag_remove_doc,
+            rag_remove_conv,
+            tool_save_document,
+            open_in_folder,
+            default_save_dir
         ])
         .build(tauri::generate_context!())
         .expect("erro ao inicializar o LocalAI Studio")
