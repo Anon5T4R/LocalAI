@@ -272,13 +272,16 @@ async fn rag_remove_conv(app: AppHandle, conv_id: String) -> Result<(), String> 
     .map_err(|e| format!("remove_conv: {e}"))?
 }
 
-/// Diálogo nativo de escolha do PDF (o backend precisa do PATH do arquivo —
-/// o input HTML do WebView só entrega bytes, sem caminho).
+/// Diálogo nativo de escolha do documento (o backend precisa do PATH do
+/// arquivo — o input HTML do WebView só entrega bytes, sem caminho).
 #[tauri::command]
-fn pick_pdf() -> Option<String> {
+fn pick_document() -> Option<String> {
     rfd::FileDialog::new()
-        .set_title("Escolha o PDF")
+        .set_title("Escolha o documento")
+        .add_filter("Documentos", &["pdf", "docx", "txt", "md"])
         .add_filter("PDF", &["pdf"])
+        .add_filter("Word (.docx)", &["docx"])
+        .add_filter("Texto (.txt, .md)", &["txt", "md"])
         .pick_file()
         .map(|p| p.to_string_lossy().into_owned())
 }
@@ -428,7 +431,7 @@ pub fn run() {
             bench_cancel,
             load_conversations,
             save_conversations,
-            pick_pdf,
+            pick_document,
             rag_add_pdf,
             rag_search,
             rag_doc_text,

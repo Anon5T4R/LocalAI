@@ -79,6 +79,15 @@ describe("buildRagContext", () => {
     expect(out).toContain("---\n\nresuma");
   });
 
+  it("documento sem paginação (docx/txt/md) cita só o nome", () => {
+    const flat: RagSource[] = [
+      { name: "ata.docx", page: 0, text: "trecho da ata", full: false },
+    ];
+    const out = buildRagContext(flat, "o que ficou decidido?");
+    expect(out).toContain("[ata.docx]\ntrecho da ata");
+    expect(out).not.toContain("p. 0");
+  });
+
   it("NÃO injeta instrução nenhuma (só conteúdo + pergunta)", () => {
     const out = buildRagContext(chunks, "pergunta");
     // nenhuma frase imperativa típica de prompt engineering oculto
@@ -102,5 +111,11 @@ describe("formatSearchReply", () => {
   it("cita doc e página no mesmo formato do contexto injetado", () => {
     const out = formatSearchReply([chunk(2, "alfa"), chunk(9, "beta")]);
     expect(out).toBe("[manual.pdf, p. 2]\nalfa\n\n[manual.pdf, p. 9]\nbeta");
+  });
+
+  it("documento sem paginação cita só o nome (page 0)", () => {
+    const out = formatSearchReply([chunk(0, "docx sem páginas")]);
+    expect(out).toBe("[manual.pdf]\ndocx sem páginas");
+    expect(out).not.toContain("p. 0");
   });
 });

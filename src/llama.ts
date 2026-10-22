@@ -269,9 +269,13 @@ export async function* streamChat(
   // pensamento. Funciona onde --reasoning off / reasoning_budget sao ignorados
   // (finetunes Qwen3.5/3.6 com template proprio). O bloco fica no PROMPT, nao no
   // texto gerado, entao a resposta sai limpa.
-  // COM TOOLS ATIVAS o prefill e PULADO: um turno assistant "ja respondido"
-  // em texto desestimula o modelo de emitir tool_calls no turno dele.
-  if (!think && !tools) {
+  //
+  // VALE TAMBEM COM TOOLS (teste real 2026-10-22): sem o prefill, o Qwen 3.5
+  // pensava ate estourar o max_tokens e terminava SEM resposta e SEM tool call
+  // ("respondeu apenas no canal de pensamento"). O prefill so fecha o bloco de
+  // pensamento; o parsing de tool_calls e feito sobre o output gerado, entao
+  // chamar ferramenta continua funcionando.
+  if (!think) {
     apiMessages.push({ role: "assistant", content: "<think>\n\n</think>\n\n" });
   }
 
@@ -334,6 +338,13 @@ export async function* streamChat(
       try {
         const obj = JSON.parse(data);
         const d = obj?.choices?.[0]?.delta;
+        // "length" = o modelo parou por max_tokens (sem resposta completa).
+        // Aconteceu de verdade: Qwen 3.5 gastou tudo pensando.
+        if (obj?.choices?.[0]?.finish_reason === "length") {
+          yield {
+            note: "[corte] resposta interrompida pelo limite de max_tokens (aumente em Amostragem & system prompt)",
+          };
+        }
         const rawDelta: string | undefined = d?.content;
         // llama.cpp expoe o pensamento em reasoning_content (ou variantes)
         const reasoning: string | undefined =

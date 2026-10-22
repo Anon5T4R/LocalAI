@@ -76,7 +76,9 @@ export function buildRagContext(sources: RagSource[], question: string): string 
   const blocks = sources.map((s) =>
     s.full
       ? `[${s.name} — documento completo]\n${s.text}`
-      : `[${s.name}, p. ${s.page}]\n${s.text}`,
+      : s.page && s.page > 0
+        ? `[${s.name}, p. ${s.page}]\n${s.text}`
+        : `[${s.name}]\n${s.text}`,
   );
   return `${blocks.join("\n\n")}\n\n---\n\n${question}`;
 }
@@ -88,6 +90,10 @@ export function buildRagContext(sources: RagSource[], question: string): string 
 export function formatSearchReply(chunks: RagChunk[]): string {
   if (!chunks.length) return "No excerpts found for that query.";
   return chunks
-    .map((c) => `[${c.doc_name}, p. ${c.page}]\n${c.text}`)
+    .map((c) =>
+      c.page > 0
+        ? `[${c.doc_name}, p. ${c.page}]\n${c.text}`
+        : `[${c.doc_name}]\n${c.text}`,
+    )
     .join("\n\n");
 }

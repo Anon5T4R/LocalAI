@@ -1819,7 +1819,7 @@ function renderImgPreview() {
 
 async function attachPdf() {
   if (state.busy) return;
-  const path = await invoke<string | null>("pick_pdf");
+  const path = await invoke<string | null>("pick_document");
   if (!path) return;
   const conv = activeConv();
   showToast(t("rag.adding"), false);
@@ -1832,22 +1832,26 @@ async function attachPdf() {
     saveConvs();
     renderDocBar();
     showToast(
-      res.ocr_pages > 0
-        ? t("rag.addedOcr", {
-            name: res.meta.name,
-            pages: res.meta.pages,
-            ocr: res.ocr_pages,
-          })
-        : t("rag.added", {
-            name: res.meta.name,
-            pages: res.meta.pages,
-          }),
+      res.meta.pages === 0
+        ? t("rag.addedFlat", { name: res.meta.name })
+        : res.ocr_pages > 0
+          ? t("rag.addedOcr", {
+              name: res.meta.name,
+              pages: res.meta.pages,
+              ocr: res.ocr_pages,
+            })
+          : t("rag.added", {
+              name: res.meta.name,
+              pages: res.meta.pages,
+            }),
       false,
     );
   } catch (e) {
     const msg = String(e);
     if (msg.startsWith("NO_TEXT")) {
       showToast(t("rag.noText"), true);
+    } else if (msg.startsWith("UNSUPPORTED")) {
+      showToast(t("rag.unsupported"), true);
     } else if (msg.startsWith("TOO_BIG")) {
       showToast(t("rag.tooBig"), true);
     } else {
@@ -1870,7 +1874,9 @@ function renderDocBar() {
     box.append(
       h("div", { class: "doc-chip", title: d.name }, [
         h("span", { class: "doc-name" }, ["📄 ", d.name]),
-        h("span", { class: "doc-meta" }, [t("rag.docPages", { pages: d.pages })]),
+        h("span", { class: "doc-meta" }, [
+          d.pages > 0 ? t("rag.docPages", { pages: d.pages }) : t("rag.docNoPages"),
+        ]),
         h(
           "button",
           {
@@ -1910,7 +1916,9 @@ function sourcesPanel(rag: RagPayload): HTMLElement {
           [
             s.full
               ? t("rag.fullDoc", { name: s.name })
-              : t("rag.chunkOf", { name: s.name, page: s.page ?? 1 }),
+              : s.page && s.page > 0
+                ? t("rag.chunkOf", { name: s.name, page: s.page })
+                : s.name,
           ],
         ),
         h("div", { class: "source-text", title: s.text }, [preview(s)]),
@@ -2352,6 +2360,18 @@ async function send() {
       aborted = (e as { name?: string })?.name === "AbortError";
       if (!aborted) {
         acc += t("chat.errorInline", { e: String(e) });
+        // "TypeError: network error" costuma ser o llama-server MORTO (crash):
+        // confere o processo e deixa a UI pronta pra recarregar o modelo.
+        try {
+          const st = await invoke<StatusReport>("server_status");
+          if (!st.running || !st.healthy) {
+            state.ready = false;
+            setPill(t("status.error"), "off");
+            $("#load-btn").textContent = t("btn.load");
+            addLog(t("chat.serverDied"));
+            showToast(t("chat.serverDied"), true);
+          }
+        } catch {}
       }
     }
 

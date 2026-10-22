@@ -31,7 +31,10 @@ const OVERLAP_CHARS: usize = 300;
 /// overlap caber no teto: OVERLAP + '\n' separador + pedaço ≤ MAX_CHARS.
 const SPLIT_LIMIT: usize = MAX_CHARS - OVERLAP_CHARS - 1;
 /// PDF maior que isto é recusado (a extração carrega o doc em RAM).
-const MAX_PDF_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_DOC_BYTES: u64 = 100 * 1024 * 1024;
+/// Teto do XML de um .docx (defesa contra zip bomb: o document.xml é
+/// normalmente < 5 MB; 64 MB dá folga e limita o estrago).
+const MAX_DOCXML_BYTES: u64 = 64 * 1024 * 1024;
 /// Menos texto que isto no documento inteiro = provável scan sem camada de
 /// texto (OCR vem na fatia D; por ora é erro explícito, não silêncio).
 const MIN_DOC_CHARS: usize = 30;
@@ -294,31 +297,130 @@ fn new_doc_id(path: &std::path::Path) -> String {
     format!("d{:016x}", h.finish())
 }
 
+/// Caiu a extração do PDF: separa as páginas. Os outros formatos entram
+/// como texto contínuo (page 0 = sem paginação).
+fn doc_kind(path: &std::path::Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("pdf") => Some("pdf"),
+        Some("docx") => Some("docx"),
+        Some("txt") => Some("txt"),
+        Some("md") => Some("md"),
+        _ => None,
+    }
+}
+
+/// Desfaz as entidades XML básicas (o texto do Word escapa &, <, >, ").
+fn decode_entities(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        // &amp; por último (senão re-escaparia as anteriores)
+        .replace("&amp;", "&")
+}
+
+/// Extrai o texto do WordprocessingML do .docx: junta o conteúdo de
+/// `<w:t>`, transforma `</w:p>` em quebra de linha, `<w:br>`/`<w:cr>` em
+/// newline e `<w:tab/>` em tab. Parser de tags simples de propósito: o
+/// formato é estável e assim não dependemos da API de um parser XML.
+pub fn docx_xml_to_text(xml: &str) -> String {
+    let mut out = String::new();
+    let mut rest = xml;
+    while let Some(lt) = rest.find('<') {
+        rest = &rest[lt..];
+        let Some(gt) = rest.find('>') else { break };
+        let tag = &rest[1..gt];
+        rest = &rest[gt + 1..];
+        if tag == "/w:p" {
+            out.push('\n');
+        } else if tag.starts_with("w:br") || tag.starts_with("w:cr") {
+            out.push('\n');
+        } else if tag.starts_with("w:tab") {
+            out.push('\t');
+        } else if tag == "w:t" || tag.starts_with("w:t ") {
+            // conteúdo até o fechamento; o texto vem escapado, sem tags XML
+            if let Some(end) = rest.find("</w:t>") {
+                out.push_str(&decode_entities(&rest[..end]));
+                rest = &rest[end + "</w:t>".len()..];
+            }
+        }
+    }
+    // colapsa linhas vazias repetidas (o Word emite muitos parágrafos vazios)
+    let mut lines: Vec<&str> = Vec::new();
+    for line in out.lines() {
+        if line.trim().is_empty() {
+            if lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+                continue;
+            }
+        }
+        lines.push(line);
+    }
+    lines.join("\n").trim().to_string()
+}
+
+/// Texto de um .docx (abre o zip e lê `word/document.xml`).
+fn extract_docx_text(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|e| format!("docx: {e}"))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("docx: {e}"))?;
+    let entry = zip
+        .by_name("word/document.xml")
+        .map_err(|_| "docx sem word/document.xml (arquivo inválido?)".to_string())?;
+    let mut xml = String::new();
+    entry
+        .take(MAX_DOCXML_BYTES)
+        .read_to_string(&mut xml)
+        .map_err(|e| format!("docx: {e}"))?;
+    Ok(docx_xml_to_text(&xml))
+}
+
+/// Extrai o documento por "página": (textos, é paginado?).
+/// PDF é paginado (página real); docx/txt/md são texto contínuo (page 0).
+fn extract_document(path: &std::path::Path) -> Result<(Vec<String>, bool), String> {
+    match doc_kind(path) {
+        Some("pdf") => {
+            let pages =
+                pdf_extract::extract_text_by_pages(path).map_err(|e| format!("PDF: {e}"))?;
+            Ok((pages, true))
+        }
+        Some("docx") => Ok((vec![extract_docx_text(path)?], false)),
+        Some(_) => {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("texto: {e}"))?;
+            Ok((vec![text], false))
+        }
+        None => Err("UNSUPPORTED".into()),
+    }
+}
+
 /// Extrai o texto do PDF por página, fatia em chunks e indexa na conversa.
 /// Erros com código estável no prefixo (o front mapeia pra i18n):
-/// "TOO_BIG" e "NO_TEXT" (scan sem camada de texto — OCR é a fatia D).
+/// "TOO_BIG", "NO_TEXT" (scan sem camada de texto e sem OCR) e "UNSUPPORTED".
 pub fn ingest_pdf(app: &AppHandle, path: &str, conv_id: &str) -> Result<AddDocResult, String> {
     let p = PathBuf::from(path);
     if !p.exists() {
         return Err(format!("Arquivo nao encontrado: {path}"));
     }
     let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
-    if meta.len() > MAX_PDF_BYTES {
+    if meta.len() > MAX_DOC_BYTES {
         return Err("TOO_BIG".into());
     }
-    let pages =
-        pdf_extract::extract_text_by_pages(&p).map_err(|e| format!("PDF: {e}"))?;
+    let (pages, paginated) = extract_document(&p)?;
     let name = p
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "documento.pdf".into());
-    // Página sem camada de texto = provável scan → OCR (Windows nativo).
-    // O contador vai pro resultado e a UI informa quantas páginas vieram do OCR.
+        .unwrap_or_else(|| "documento".into());
+    // Página de PDF sem camada de texto = provável scan → OCR (Windows
+    // nativo). docx/txt/md são texto contínuo: não passam por OCR.
     let mut ocr_pages = 0u32;
     let mut page_texts: Vec<String> = Vec::with_capacity(pages.len());
     for (i, page_text) in pages.iter().enumerate() {
         let mut text = page_text.clone();
-        if text.trim().len() < MIN_PAGE_CHARS {
+        if paginated && text.trim().len() < MIN_PAGE_CHARS {
             if let Some(ocr_text) = crate::ocr::page_text(&p, (i + 1) as u32) {
                 text = ocr_text;
                 ocr_pages += 1;
@@ -336,7 +438,8 @@ pub fn ingest_pdf(app: &AppHandle, path: &str, conv_id: &str) -> Result<AddDocRe
     remove_doc(&conn, conv_id, &doc_id)?;
     let mut seq = 0u32;
     for (i, page_text) in page_texts.iter().enumerate() {
-        let page = (i + 1) as u32;
+        // 0 = documento sem paginação (docx/txt/md) — a citação sai só com o nome
+        let page = if paginated { (i + 1) as u32 } else { 0 };
         for chunk in chunk_page(page_text) {
             insert_chunk(&conn, conv_id, &doc_id, &name, page, seq, &chunk)?;
             seq += 1;
@@ -346,7 +449,7 @@ pub fn ingest_pdf(app: &AppHandle, path: &str, conv_id: &str) -> Result<AddDocRe
         meta: DocMeta {
             doc_id,
             name,
-            pages: page_texts.len() as u32,
+            pages: if paginated { page_texts.len() as u32 } else { 0 },
             chars: total_chars as u64,
         },
         ocr_pages,
@@ -402,8 +505,11 @@ pub fn doc_text(conn: &Connection, conv_id: &str, doc_id: &str) -> Result<Option
     for row in rows {
         let (page, text) = row.map_err(|e| e.to_string())?;
         if !any {
-            out.push_str(&format!("[p. {page}]\n"));
-        } else if page != last_page {
+            // page 0 = documento sem paginação (docx/txt/md): sem marcador
+            if page > 0 {
+                out.push_str(&format!("[p. {page}]\n"));
+            }
+        } else if page != last_page && page > 0 {
             out.push_str(&format!("\n\n[p. {page}]\n"));
         } else {
             out.push_str("\n\n");
@@ -703,6 +809,43 @@ mod tests {
         assert!(txt.contains("[p. 1]\npágina um"));
         assert!(txt.contains("[p. 2]\npágina dois"));
         assert!(doc_text(&conn, "c1", "inexistente").unwrap().is_none());
+    }
+
+    #[test]
+    fn docx_xml_extrai_paragrafos_quebras_e_entidades() {
+        let xml = "<w:body><w:p><w:r><w:t>Olá &amp; bem-vindo</w:t></w:r></w:p>\
+<w:p><w:r><w:t xml:space=\"preserve\">Segundo</w:t><w:tab/><w:t>Terceiro</w:t></w:r></w:p>\
+<w:p><w:r><w:t>quarta</w:t><w:br/><w:t>quinta</w:t></w:r></w:p></w:body>";
+        let txt = docx_xml_to_text(xml);
+        assert_eq!(txt, "Olá & bem-vindo\nSegundo\tTerceiro\nquarta\nquinta");
+    }
+
+    #[test]
+    fn docx_roundtrip_com_o_gerador_do_app() {
+        // pipeline completo de verdade: o MESMO gerador de .docx das
+        // ferramentas escreve, e o extrator do anexo lê de volta
+        let md = "# Título\n\nUm parágrafo com **forte** e *itálico*.\n\n- item um\n- item dois\n";
+        let bytes = crate::tools::markdown_to_docx(md).unwrap();
+        let tmp = std::env::temp_dir().join(format!("localai-rag-docx-{}.docx", std::process::id()));
+        std::fs::write(&tmp, &bytes).unwrap();
+        let text = extract_docx_text(&tmp).unwrap();
+        std::fs::remove_file(&tmp).ok();
+        assert!(text.contains("Título"), "texto: {text:?}");
+        assert!(text.contains("forte"));
+        assert!(text.contains("item um"));
+        assert!(text.contains("item dois"));
+    }
+
+    #[test]
+    fn extract_document_txt_e_md() {
+        let tmp = std::env::temp_dir().join(format!("localai-rag-txt-{}.txt", std::process::id()));
+        std::fs::write(&tmp, "conteudo simples").unwrap();
+        let (pages, paginated) = extract_document(&tmp).unwrap();
+        std::fs::remove_file(&tmp).ok();
+        assert_eq!(pages, vec!["conteudo simples".to_string()]);
+        assert!(!paginated);
+        // extensão desconhecida → UNSUPPORTED (o front mostra erro claro)
+        assert!(extract_document(std::path::Path::new("x.exe")).is_err());
     }
 
     #[test]

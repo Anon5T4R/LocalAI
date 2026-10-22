@@ -143,6 +143,8 @@ const pt = {
   "chat.errorInline": "\n\n[erro: {e}]",
   "chat.image": "Imagem",
   "chat.describeImage": "Descreva a imagem.",
+  "chat.serverDied":
+    "⚠ o servidor caiu (o modelo travou?) — clique em Carregar para reiniciar.",
   "chat.export": "Exportar conversa (.md)",
   "prompts.title": "Prompts salvos (clique para usar)",
   "prompts.save": "＋ salvar texto atual",
@@ -156,8 +158,8 @@ const pt = {
 
   // ----- Documentos / RAG (PDF por conversa) -----
   "chat.attachPdf":
-    "Anexar PDF — o texto é indexado localmente e os trechos relevantes entram no contexto",
-  "rag.adding": "Extraindo texto do PDF…",
+    "Anexar documento (PDF, Word, txt, md) — o texto é indexado localmente e os trechos relevantes entram no contexto",
+  "rag.adding": "Extraindo texto do documento…",
   "rag.added": "✓ {name} anexado ({pages} págs.)",
   "rag.addedOcr": "✓ {name} anexado ({pages} págs., {ocr} via OCR)",
   "rag.noText":
@@ -169,6 +171,11 @@ const pt = {
   "rag.sources": "📄 Fontes consultadas ({n})",
   "rag.fullDoc": "{name} — documento completo",
   "rag.chunkOf": "{name}, p. {page}",
+  "rag.docNoPages": "documento",
+  "rag.addedFlat": "✓ {name} anexado",
+  "rag.unsupported":
+    "⚠ formato não suportado — anexe PDF, Word (.docx), TXT ou MD.",
+  "chat.attachDocHint": "PDF, Word, TXT ou MD",
 
   // ----- Ferramentas do modelo (tool calls) -----
   "tools.saveDir": "Pasta de salvamento",
@@ -402,6 +409,8 @@ const en: Record<MessageKey, string> = {
   "chat.errorInline": "\n\n[error: {e}]",
   "chat.image": "Image",
   "chat.describeImage": "Describe the image.",
+  "chat.serverDied":
+    "⚠ the server went down (did the model crash?) — click Load to restart.",
   "chat.export": "Export conversation (.md)",
   "prompts.title": "Saved prompts (click to use)",
   "prompts.save": "＋ save current text",
@@ -415,8 +424,8 @@ const en: Record<MessageKey, string> = {
 
   // ----- Documents / RAG (PDF per conversation) -----
   "chat.attachPdf":
-    "Attach PDF — the text is indexed locally and the relevant excerpts go into the context",
-  "rag.adding": "Extracting text from the PDF…",
+    "Attach document (PDF, Word, txt, md) — the text is indexed locally and the relevant excerpts go into the context",
+  "rag.adding": "Extracting text from the document…",
   "rag.added": "✓ {name} attached ({pages} pages)",
   "rag.addedOcr": "✓ {name} attached ({pages} pages, {ocr} via OCR)",
   "rag.noText":
@@ -428,6 +437,10 @@ const en: Record<MessageKey, string> = {
   "rag.sources": "📄 Sources consulted ({n})",
   "rag.fullDoc": "{name} — full document",
   "rag.chunkOf": "{name}, p. {page}",
+  "rag.docNoPages": "document",
+  "rag.addedFlat": "✓ {name} attached",
+  "rag.unsupported": "⚠ unsupported format — attach PDF, Word (.docx), TXT or MD.",
+  "chat.attachDocHint": "PDF, Word, TXT or MD",
 
   // ----- Model tools (tool calls) -----
   "tools.saveDir": "Save folder",
@@ -653,6 +666,8 @@ const es: Record<MessageKey, string> = {
   "chat.errorInline": "\n\n[error: {e}]",
   "chat.image": "Imagen",
   "chat.describeImage": "Describe la imagen.",
+  "chat.serverDied":
+    "⚠ el servidor se cayó (¿el modelo se bloqueó?) — haz clic en Cargar para reiniciar.",
   "chat.export": "Exportar conversación (.md)",
   "prompts.title": "Prompts guardados (clic para usar)",
   "prompts.save": "＋ guardar texto actual",
@@ -666,8 +681,8 @@ const es: Record<MessageKey, string> = {
 
   // ----- Documentos / RAG (PDF por conversación) -----
   "chat.attachPdf":
-    "Adjuntar PDF — el texto se indexa localmente y los fragmentos relevantes entran en el contexto",
-  "rag.adding": "Extrayendo texto del PDF…",
+    "Adjuntar documento (PDF, Word, txt, md) — el texto se indexa localmente y los fragmentos relevantes entran en el contexto",
+  "rag.adding": "Extrayendo texto del documento…",
   "rag.added": "✓ {name} adjuntado ({pages} págs.)",
   "rag.addedOcr": "✓ {name} adjuntado ({pages} págs., {ocr} vía OCR)",
   "rag.noText":
@@ -679,6 +694,11 @@ const es: Record<MessageKey, string> = {
   "rag.sources": "📄 Fuentes consultadas ({n})",
   "rag.fullDoc": "{name} — documento completo",
   "rag.chunkOf": "{name}, p. {page}",
+  "rag.docNoPages": "documento",
+  "rag.addedFlat": "✓ {name} adjuntado",
+  "rag.unsupported":
+    "⚠ formato no soportado — adjunta PDF, Word (.docx), TXT o MD.",
+  "chat.attachDocHint": "PDF, Word, TXT o MD",
 
   // ----- Herramientas del modelo (tool calls) -----
   "tools.saveDir": "Carpeta de guardado",
