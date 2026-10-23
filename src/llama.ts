@@ -48,6 +48,9 @@ export interface ChatMessage {
   secs?: number | null;
   /** Documentos consultados nesta pergunta (só UI/persistência). */
   rag?: RagPayload;
+  /** Modo documento: o app orquestrou a criação do arquivo deste pedido
+   *  (a API recebe a pergunta + instrução; ver send()/buildApiMessages). */
+  docRequest?: string;
   /** Assistant: ferramentas que o modelo pediu para executar. */
   tool_calls?: ToolCall[];
   /** Resposta de ferramenta (role "tool"): a qual chamada pertence. */

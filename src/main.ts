@@ -16,6 +16,13 @@ import {
   type Usage,
 } from "./llama";
 import {
+  buildDocInstruction,
+  detectDocRequest,
+  docFilenameFromMd,
+  extractDocMarkdown,
+  type DocFormat,
+} from "./docmode";
+import {
   buildRagContext,
   decideStrategy,
   formatSearchReply,
@@ -2191,6 +2198,13 @@ async function send() {
       ]
     : text;
 
+  // ---------- Modo documento: o APP orquestra a criacao do arquivo ----------
+  // Pedido de documento? O app pede so o CONTEUDO ao modelo (modelos
+  // pequenos fazem isso bem) e salva com a mesma ferramenta — sem depender
+  // de tool calling nativo e sem o loop (economia de computacao).
+  const docReq: DocFormat | null =
+    state.toolsEnabled && text ? detectDocRequest(text)?.format ?? null : null;
+
   // ---------- RAG: busca os trechos ANTES de montar a mensagem ----------
   // PDF pequeno → texto inteiro; grande → BM25 top-k. O bloco montado é
   // exatamente o que o painel "Fontes" mostra — nada oculto.
@@ -2242,6 +2256,7 @@ async function send() {
     role: "user",
     content,
     ...(rag ? { rag } : {}),
+    ...(docReq ? { docRequest: docReq } : {}),
   });
   if (conv.messages.length === 1) {
     conv.title = (text || t("chat.image")).slice(0, 40); // titulo = inicio da 1a msg
@@ -2260,7 +2275,14 @@ async function send() {
     // so envia system message se houver conteudo
     ...(sysContent ? [{ role: "system" as const, content: sysContent }] : []),
     ...conv.messages.map((m) => {
-      if (m.role !== "user" || !m.rag) return m;
+      if (m.role !== "user") return m;
+      if (m.docRequest && typeof m.content === "string") {
+        return {
+          ...m,
+          content: m.content + "\\n\\n" + buildDocInstruction(m.docRequest as DocFormat),
+        };
+      }
+      if (!m.rag) return m;
       if (typeof m.content === "string") {
         return { ...m, content: m.rag.context };
       }
@@ -2301,7 +2323,8 @@ async function send() {
   // documentos só aparece quando a conversa tem PDFs anexados.
   const tools = toolsActive()
     ? [
-        SAVE_DOCUMENT_TOOL,
+        // modo documento: o app salva — a tool de salvar nao vai pro modelo
+        ...(docReq ? [] : [SAVE_DOCUMENT_TOOL]),
         ...(conv.docs?.length ? [SEARCH_DOCS_TOOL] : []),
       ]
     : undefined;
@@ -2440,11 +2463,52 @@ async function send() {
   } else {
     a.meta.textContent = `${secs.toFixed(1)}s`;
   }
+  // Modo documento: o app salva o conteudo como arquivo (sem tool call do
+  // modelo — modelos pequenos respondem o conteudo bem; salvar e com a gente).
+  let docCall: ToolCall | null = null;
+  if (docReq && !aborted) {
+    const md = extractDocMarkdown(combined);
+    if (md.length > 20) {
+      try {
+        let dir = state.saveDir;
+        if (!dir) {
+          dir = await invoke<string>("default_save_dir");
+          state.saveDir = dir;
+          try { localStorage.setItem(SAVE_DIR_KEY, dir); } catch {}
+        }
+        const filename = docFilenameFromMd(md);
+        const res = await invoke<{ path: string; format: string; bytes: number }>(
+          "tool_save_document",
+          { dir, filename, format: docReq, content: md },
+        );
+        docCall = {
+          id: "app-doc",
+          name: "save_document",
+          arguments: JSON.stringify({ filename, format: docReq, content: md }),
+        };
+        const saved = res;
+        conv.messages.push({
+          role: "tool",
+          tool_call_id: "app-doc",
+          content: `Saved to: ${saved.path}`,
+          savedPath: saved.path,
+        });
+        renderToolChip(a.chipHost, docCall, {
+          ok: true,
+          reply: `Saved to: ${saved.path}`,
+          path: saved.path,
+        });
+      } catch (e) {
+        addLog(t("rag.error", { e: String(e) }));
+      }
+    }
+  }
   conv.messages.push({
     role: "assistant",
     content: acc,
     // pensamento fica salvo para reabrir a conversa; nunca volta pra API
     ...(thinkText.trim() ? { reasoning: thinkText } : {}),
+    ...(docCall ? { tool_calls: [docCall] } : {}),
     ...(lastTps != null ? { tps: lastTps, secs } : {}),
   });
   saveConvs();
