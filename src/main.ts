@@ -6,6 +6,7 @@ import DOMPurify from "dompurify";
 import {
   streamChat,
   contentText,
+  parseToolCallsFromText,
   type ChatMessage,
   type ContentPart,
   type RagPayload,
@@ -2375,9 +2376,18 @@ async function send() {
       }
     }
 
+    // fallback: servidor que NÃO parseia tool calls no stream (ou modelo que
+    // emite `<tool_call>{...}</tool_call>` no texto) — extrai do texto da rodada
+    if (!pendingTools.length && acc.trim()) {
+      const fb = parseToolCallsFromText(acc);
+      if (fb.calls.length) {
+        pendingTools = fb.calls;
+        acc = fb.text.trim();
+      }
+    }
+
     // rodada terminou com pedidos de ferramenta? executa e continua
     if (pendingTools.length && !aborted) {
-      // congela o texto desta rodada e persiste o turno com os pedidos
       full += (full ? "\n\n" : "") + acc;
       conv.messages.push({
         role: "assistant",

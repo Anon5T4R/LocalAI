@@ -316,6 +316,8 @@ export async function* streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
   const filter = new ThinkFilter();
+  // tool_calls vem em DELTAS no stream: agrega por index e emite no fim
+  const toolAgg = new ToolCallAggregator();
 
   while (true) {
     const { value, done } = await reader.read();
@@ -332,6 +334,8 @@ export async function* streamChat(
       if (data === "[DONE]") {
         const rest = filter.flush();
         if (rest.delta || rest.reasoning) yield rest;
+        const calls = toolAgg.drain();
+        if (calls.length) yield { toolCalls: calls };
         yield { done: true };
         return;
       }
@@ -344,6 +348,17 @@ export async function* streamChat(
           yield {
             note: "[corte] resposta interrompida pelo limite de max_tokens (aumente em Amostragem & system prompt)",
           };
+        }
+        // tool_calls no delta (formato OpenAI): index + id/name/arguments em pedacos
+        const tcs = d?.tool_calls as
+          | Array<{
+              index?: number;
+              id?: string;
+              function?: { name?: string; arguments?: string };
+            }>
+          | undefined;
+        if (tcs && tcs.length) {
+          toolAgg.feed(tcs.map((x) => ({ ...x, index: x.index ?? 0 })));
         }
         const rawDelta: string | undefined = d?.content;
         // llama.cpp expoe o pensamento em reasoning_content (ou variantes)
@@ -375,7 +390,39 @@ export async function* streamChat(
   }
   const rest = filter.flush();
   if (rest.delta || rest.reasoning) yield rest;
+  const tailCalls = toolAgg.drain();
+  if (tailCalls.length) yield { toolCalls: tailCalls };
   yield { done: true };
+}
+
+/** Fallback: alguns modelos/servidores emitem a chamada como TEXTO
+ *  (`<tool_call>{"name":...,"arguments":{...}}</tool_call>`) em vez de deltas
+ *  de protocolo. Extrai os blocos válidos e devolve o texto limpo + chamadas.
+ *  Só age se o JSON tiver `name` (bloco que o modelo escreveu "falando
+ *  sobre" a tag fica intacto). */
+export function parseToolCallsFromText(text: string): {
+  text: string;
+  calls: ToolCall[];
+} {
+  const calls: ToolCall[] = [];
+  let n = 0;
+  const clean = text.replace(
+    /<tool_call>([\s\S]*?)<\/tool_call>/g,
+    (whole, body: string) => {
+      try {
+        const obj = JSON.parse(body.trim());
+        const name = String(obj?.name ?? "");
+        if (!name) return whole;
+        const rawArgs = obj?.arguments ?? obj?.parameters ?? {};
+        const args = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs);
+        calls.push({ id: `fallback-${++n}`, name, arguments: args });
+        return "";
+      } catch {
+        return whole;
+      }
+    },
+  );
+  return { text: clean, calls };
 }
 
 /// Verifica /health e retorna o id do modelo carregado, se disponivel.

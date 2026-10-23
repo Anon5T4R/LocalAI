@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { ThinkFilter, ToolCallAggregator, contentText } from "../../llama";
+import { describe, expect, it, vi } from "vitest";
+import {
+  ThinkFilter,
+  ToolCallAggregator,
+  contentText,
+  parseToolCallsFromText,
+  streamChat,
+  type SamplingParams,
+  type ToolDef,
+} from "../../llama";
 
 describe("contentText", () => {
   // O content multimodal carrega a imagem como data-URL base64 de centenas de
@@ -131,8 +139,6 @@ describe("ThinkFilter", () => {
 });
 
 describe("ToolCallAggregator", () => {
-  // A API entrega tool_calls em DELTAS: id/name chegam uma vez, arguments
-  // em pedaços de string JSON. Sem agregação, o loop de tools não funciona.
   it("agrega deltas por index (arguments em pedaços)", () => {
     const agg = new ToolCallAggregator();
     agg.feed([
@@ -168,5 +174,93 @@ describe("ToolCallAggregator", () => {
 
   it("vazio devolve lista vazia", () => {
     expect(new ToolCallAggregator().drain()).toEqual([]);
+  });
+});
+
+// GARANTIA do loop de ferramentas: o streamChat precisa EMITIR os tool_calls
+// agregados dos deltas. Regressão real (v0.11.0): a classe existia mas nunca
+// era alimentada — o modelo gerava 770 tokens de tool call, o app descartava
+// e nada acontecia (bolha vazia).
+describe("streamChat + tool_calls", () => {
+  const params: SamplingParams = {
+    temperature: 0.7,
+    top_p: 0.95,
+    top_k: 40,
+    min_p: 0.05,
+    repeat_penalty: 1.1,
+    max_tokens: 100,
+  };
+  const tool: ToolDef = {
+    type: "function",
+    function: { name: "save_document", description: "d", parameters: {} },
+  };
+
+  it("agrega os deltas e emite o chunk toolCalls antes do done", async () => {
+    const sse = [
+      'data: {"choices":[{"index":0,"finish_reason":null,"delta":{"role":"assistant","content":""}}]}',
+      'data: {"choices":[{"index":0,"finish_reason":null,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"save_document","arguments":"{\\"filename\\":"}}]}}]}',
+      'data: {"choices":[{"index":0,"finish_reason":null,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"ata\\",\\"format\\":\\"docx\\"}"}}]}}]}',
+      'data: {"choices":[{"index":0,"finish_reason":"tool_calls","delta":{}}]}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n");
+    const orig = globalThis.fetch;
+    globalThis.fetch = vi.fn(
+      async () => new Response(sse, { status: 200 }),
+    ) as unknown as typeof fetch;
+    try {
+      const chunks: Array<{ toolCalls?: unknown; done?: boolean }> = [];
+      for await (const c of streamChat(
+        1,
+        [{ role: "user", content: "x" }],
+        params,
+        new AbortController().signal,
+        false,
+        [tool],
+      )) {
+        chunks.push(c);
+      }
+      const emitted = chunks.find((c) => c.toolCalls);
+      expect(emitted).toBeTruthy();
+      expect(emitted!.toolCalls).toEqual([
+        {
+          id: "call_1",
+          name: "save_document",
+          arguments: '{"filename":"ata","format":"docx"}',
+        },
+      ]);
+      expect(chunks[chunks.length - 1].done).toBe(true);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+});
+
+describe("parseToolCallsFromText (fallback de servidor)", () => {
+  it("extrai o bloco com name/arguments e limpa o texto", () => {
+    const src =
+      'Vou criar.\n<tool_call>\n{"name":"save_document","arguments":{"filename":"ata","format":"docx","content":"x"}}\n</tool_call>';
+    const { text, calls } = parseToolCallsFromText(src);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("save_document");
+    expect(JSON.parse(calls[0].arguments).format).toBe("docx");
+    expect(text.trim()).toBe("Vou criar.");
+  });
+
+  it("bloco inválido ou sem name fica intacto (não come texto legítimo)", () => {
+    const bad = "<tool_call>isso não é json</tool_call>";
+    const r1 = parseToolCallsFromText(bad);
+    expect(r1.calls).toHaveLength(0);
+    expect(r1.text).toBe(bad);
+    const noName = '<tool_call>{"arguments":{}}</tool_call>';
+    const r2 = parseToolCallsFromText(noName);
+    expect(r2.calls).toHaveLength(0);
+  });
+
+  it("arguments já em string JSON é preservado", () => {
+    const { calls } = parseToolCallsFromText(
+      '<tool_call>{"name":"x","arguments":"{\\"a\\":1}"}</tool_call>',
+    );
+    expect(calls[0].arguments).toBe('{"a":1}');
   });
 });
